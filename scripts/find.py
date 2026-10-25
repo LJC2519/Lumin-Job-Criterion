@@ -33,7 +33,8 @@ INDEX_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "ind
 # 检测机制（可移植、自维护，不写死名单）：build 时读每个技能 SKILL.md 的
 # frontmatter，带 `disable-model-invocation: true` 的即标记
 # invocation_disabled=True——作者禁用模型自动调用，Skill 工具加载不到。
-# （2026-10-25 实测：19 个 mattpocock 系技能全部带此标志，已注册对照均无。）
+# （2026-10-25 实测：mattpocock 系 19 个全部带此标志，已注册对照均无；
+#   同日经用户同意开放 to-spec/to-tickets 两个——余 17 个仍带。）
 # 查询时这类命中进「下载了，但没有注册」分区：挑明状态 + 照样介绍功能。
 
 # ── 中文 → 英文检索词扩展（覆盖本项目高频场景）──
