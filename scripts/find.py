@@ -14,6 +14,7 @@ WorkBuddy 内置技能 + 插件缓存最新版，可用环境变量 LJC_SKILLS_D
     python3 find.py suggest "把申报书数据合规章节加工成评委友好版"   # 任务盘点：相关 vs 用不到
     python3 find.py doctor               # 一键体检：索引/断链/根目录/通道
     python3 find.py semantic             # 语义后端自检（探测到就用，没探测到说明怎么开）
+    python3 find.py semantic --clear-cache  # 删掉向量缓存（换模型会自动作废，也可手动清）
     python3 find.py list                  # 列出全部已索引技能
 
 分工：本脚本管「已装的里有没有」（秒回、零网络）；
@@ -29,6 +30,7 @@ import os
 import re
 import subprocess
 import sys
+import time
 from collections import Counter
 
 SKILLS_DIR = os.environ.get("LJC_SKILLS_DIR") or os.path.expanduser("~/.workbuddy/skills")
@@ -436,6 +438,22 @@ STOPWORDS_EN = {
     "need", "help", "find", "get", "make", "use", "using", "something",
 }
 
+# 中文停用片段（2026-10-26 评估集逼出来的）：量词、代词、客套话。
+# 没有它们，「做一份 PPT」里的「做一份」会命中一堆技能描述里的同款措辞，
+# 再靠「覆盖 N 个词 +30」的加成冲到 60 分，把真正对的 pptx（只有 30 分）压下去
+# ——评估集 #4 实测翻车。英文停用词加了一天后才补中文，是因为中文查询
+# 不按空格分词，症状要等评估集跑起来才看得见。
+STOPWORDS_ZH = {
+    "做一份", "做一个", "做一下", "写一份", "写一个", "来一份", "整一个",
+    "帮我", "帮我找", "帮我找个", "帮我把", "帮我看", "我想", "我要", "我有",
+    "我想知道", "我想问", "有没有", "能不能", "可不可以", "会不会", "要不要",
+    "怎么样", "怎么办", "什么样", "为什么", "是不是", "对不对", "行不行",
+    "如何", "什么", "哪些", "那个", "这个", "这些", "那些", "给我", "麻烦",
+    "请帮", "一下", "一份", "一个", "一点", "我的", "你的", "他的", "我们的",
+    "对于", "关于", "然后", "所以", "但是", "而且", "还是", "就是", "不是",
+    "需要", "使用", "用来", "可以", "找一找", "看一看", "请问", "有办法",
+}
+
 
 def strip_flags(text):
     """命令行 flag（--json/--top 及取值）不该被当成查询词。"""
@@ -470,7 +488,7 @@ def expand_query(query, extra_terms=None):
     if cleaned:
         terms.add(cleaned)
         for w in cleaned.split():
-            if len(w) >= 2 and w not in STOPWORDS_EN:
+            if len(w) >= 2 and w not in STOPWORDS_EN and w not in STOPWORDS_ZH:
                 terms.add(w)
     # 2) 中文关键词 → 英文扩展（长词优先，避免「画图」被「图」抢先）
     mapping = dict(ZH_TO_EN)
@@ -899,6 +917,67 @@ def needs_vector(n_keyword_hits, threshold=VEC_LAZY_MIN):
     return n_keyword_hits < threshold
 
 
+def partition_results(index, terms, vec=None, sem=None):
+    """把全部技能分成三桶并各自排序：
+
+    - scored       关键词命中（有证据，可信度高）
+    - rescued_only 关键词零命中、纯靠语义捞回（证据弱——嵌入衡量文本相似，
+                   不衡量技能真能干这活）
+    - hidden       已下载但未注册（`disable-model-invocation`）
+
+    三桶分开是不与证据混排的前提（2026-10-26 挑刺②）：语义候选和关键词命中
+    若在同一列里按分数排，用户分不出哪一截可信。
+    抽成纯函数是因为这套分区规则是整个脚本最容易改错的地方，必须可单测。
+    """
+    skills = index["skills"]
+    if sem is None:
+        sem = semantic_scores(skills, terms)
+    vec = vec or []
+    vmax = max(vec) if vec else 0.0
+    rescued = rescue_indices(vec, vmax)
+    scored, rescued_only, hidden = [], [], []
+    for i, e in enumerate(skills):
+        s, hits = score_entry(e, terms)
+        sem_pts, label = fusion_points(sem[i], vec[i] if vec else None)
+        if s <= 0:
+            # 关键词零命中 → 只在语义信号够强时才捞回，且要过三道闸门
+            # （绝对下限 + 不低于本轮最高分 80% + 名额上限，防余弦基线噪声灌入）。
+            if sem_pts >= 8 and (not vec or i in rescued):
+                row = (sem_pts, [label or f"tfidf≈{sem[i]:.2f}"], e)
+                (hidden if e.get("invocation_disabled") else rescued_only).append(row)
+            continue
+        s += sem_pts
+        if label:
+            hits.append(label)
+        if e.get("invocation_disabled"):
+            hidden.append((s, hits, e))
+            continue
+        scored.append((s, hits, e))
+    scored.sort(key=lambda x: (-x[0], x[2]["name"]))
+    rescued_only.sort(key=lambda x: -x[0])
+    hidden.sort(key=lambda x: -x[0])
+    return scored, rescued_only, hidden
+
+
+def fmt_elapsed(sec):
+    """纯函数：耗时自适应单位——词袋是毫秒级，加载模型是秒级，用一个量纲会失真。"""
+    return f"{sec * 1000:.0f}ms" if sec < 1 else f"{sec:.2f}s"
+
+
+def retrieval_mode(vec, backend=None, n_bag_hits=None):
+    """这一轮实际用了什么检索方式，一句话说给用户听（可观测性）。
+    没有这一行，用户跑完一次查询根本不知道到底用没用上向量
+    ——语义后端是软依赖又带懒加载，行为不写进输出就等于不可观测（2026-10-26 挑刺⑦）。"""
+    if vec:
+        return f"词袋 + 向量（{SEM_STATE.get('source') or ''}）"
+    if backend:  # 探测到了，但这次没产出向量（编码失败/缓存不可用）
+        return f"仅词袋（语义后端未生效：{SEM_STATE.get('reason') or '编码失败'}）"
+    if n_bag_hits is not None and not needs_vector(n_bag_hits):
+        return (f"仅词袋（关键词已命中 {n_bag_hits} 个 ≥ {VEC_LAZY_MIN}，"
+                f"未加载模型以保持秒回）")
+    return f"仅词袋（{SEM_STATE.get('reason') or '未启用语义后端'}）"
+
+
 def vec_rescue_ok(vec, i, vmax, floor=VEC_RESCUE, ratio=VEC_REL_RATIO):
     """纯函数：关键词零命中时，这个技能的向量分是否强到值得捞回。
     双关：绝对下限（防余弦基线噪声）+ 不低于本轮最高分的 ratio（防「全体都很像」）。"""
@@ -1016,50 +1095,31 @@ def cmd_query(query, top=10, as_json=False):
     if not terms:
         print("查询为空")
         return
-    scored = []
-    hidden = []
-    sem = semantic_scores(index["skills"], terms)
+    t0 = time.time()
     # 先只跑词袋（毫秒级）：答得上来就不必请模型出山（加载 10~15 秒）。
-    bag = [score_entry(e, terms) for e in index["skills"]]
-    n_bag_hits = sum(1 for s, _ in bag if s > 0)
+    n_bag_hits = sum(1 for e in index["skills"] if score_entry(e, terms)[0] > 0)
     vec = []
+    backend = None
     if needs_vector(n_bag_hits):
         backend = resolve_semantic_backend()
         vec = vector_scores(index, semantic_query_text(query, terms), backend) if backend else []
-    vmax = max(vec) if vec else 0.0
-    rescued = rescue_indices(vec, vmax)
-    for i, e in enumerate(index["skills"]):
-        s, hits = bag[i]
-        vs = vec[i] if vec else None
-        sem_pts, label = fusion_points(sem[i], vs)
-        if s <= 0:
-            # 关键词零命中但语义信号强 → 低分候选（扩召回）。
-            # 过三关：绝对下限 + 不低于本轮最高分 80% + 名额上限（防基线噪声灌入）。
-            if sem_pts >= 8 and (not vec or i in rescued):
-                # 标注「语义候选」：关键词一个没命中、全靠语义信号捞回来的，
-                # 可信度低于关键词命中项，用户应当知道这一点。
-                s, hits = sem_pts, [f"语义候选·{label or f'tfidf≈{sem[i]:.2f}'}"]
-            else:
-                continue
-        else:
-            s += sem_pts
-            if label:
-                hits.append(label)
-        if e.get("invocation_disabled"):
-            hidden.append((s, hits, e))
-            continue
-        scored.append((s, hits, e))
-    scored.sort(key=lambda x: (-x[0], x[2]["name"]))
-    hidden.sort(key=lambda x: -x[0])
+    elapsed = time.time() - t0
+    mode = retrieval_mode(vec, backend, n_bag_hits)
+    scored, rescued_only, hidden = partition_results(index, terms, vec)
     record_hits("query", query, [e["name"] for _, _, e in scored],
                 [e["name"] for _, _, e in hidden])
     if as_json:
         print(json.dumps({
             "query": query, "terms": sorted(terms),
+            "retrieval": {"mode": mode, "elapsed_s": round(elapsed, 3)},
             "results": [{"name": e["name"], "source": e["source"], "score": s,
                          "hits": hits,
                          "description": (e.get("description") or e.get("description_zh") or "")}
                         for s, hits, e in scored],
+            "semantic_only": [{"name": e["name"], "source": e["source"], "score": s,
+                               "hits": hits,
+                               "description": (e.get("description") or e.get("description_zh") or "")}
+                              for s, hits, e in rescued_only],
             "unregistered": [{"name": e["name"], "source": e["source"], "score": s,
                               "description": (e.get("description") or e.get("description_zh") or "")}
                              for s, hits, e in hidden],
@@ -1085,13 +1145,34 @@ def cmd_query(query, top=10, as_json=False):
         if len(hidden) > top:
             print(f" （另有 {len(hidden) - top} 个未注册命中未展开）\n")
 
-    if not scored:
+    def print_rescued():
+        """语义候选单独分区：关键词零命中、全靠语义捞回的，证据强度低于关键词命中。"""
+        if not rescued_only:
+            return
+        print("── 语义候选（关键词一个都没命中，全靠语义相似度捞回）──")
+        print("   可信度低于上面：嵌入衡量的是文本相似，不等于这个技能真能干这活。")
+        print("   推荐给用户前先读它 SKILL.md 原文核实一次。")
+        for i, (s, hits, e) in enumerate(rescued_only[:top], 1):
+            desc = (e.get("description") or e.get("description_zh") or "（无描述）")
+            if len(desc) > 150:
+                desc = desc[:150] + "…"
+            print(f" S{i}. [{e['name']}]  (来源:{e['source']}  语义分:{s})")
+            print(f"    {desc}")
+            if hits:
+                print(f"    命中: {', '.join(hits[:6])}")
+            print()
+        if len(rescued_only) > top:
+            print(f" （另有 {len(rescued_only) - top} 个语义候选未展开）\n")
+
+    if not scored and not rescued_only:
         print(f"本地 {n_total} 个已安装技能中，没有匹配「{query}」的可调用技能。")
         print("→ 下一步：走官方 find-skills 技能搜市场（SkillHub），")
         print("  或让我直接用通用能力帮你做。\n")
         print_hidden()
         return
-    print(f"查询「{query}」→ 扩展检索词 {len(terms)} 个：{len(scored)} 个可调用 + {len(hidden)} 个未注册命中。\n")
+    print(f"查询「{query}」→ 扩展检索词 {len(terms)} 个：{len(scored)} 个关键词命中"
+          f" + {len(rescued_only)} 个语义候选 + {len(hidden)} 个未注册。")
+    print(f" 检索方式：{mode} · 耗时 {fmt_elapsed(elapsed)}\n")
     for i, (s, hits, e) in enumerate(scored[:top], 1):
         src = e["source"]
         desc = (e.get("description") or e.get("description_zh") or "（无描述）")
@@ -1102,6 +1183,7 @@ def cmd_query(query, top=10, as_json=False):
         if hits:
             print(f"    命中: {', '.join(hits[:6])}")
         print()
+    print_rescued()
     print_hidden()
 
 
@@ -1143,40 +1225,57 @@ def cmd_suggest(task, top=10, as_json=False):
     if not terms:
         print("任务描述为空")
         return
-    useful, unused = [], []
+    t0 = time.time()
+    useful, rescued_useful, unused = [], [], []
     sem = semantic_scores(index["skills"], terms)
     bag = [score_entry(e, terms) for e in index["skills"]]
     n_bag_hits = sum(1 for e, (s, _) in zip(index["skills"], bag)
                      if s > 0 and not e.get("invocation_disabled"))
     vec = []  # 同 query：词袋答得上来就不加载模型
+    backend = None
     if needs_vector(n_bag_hits):
         backend = resolve_semantic_backend()
         vec = vector_scores(index, semantic_query_text(task, terms), backend) if backend else []
+    elapsed = time.time() - t0
+    mode = retrieval_mode(vec, backend, n_bag_hits)
+    vmax = max(vec) if vec else 0.0
+    rescued = rescue_indices(vec, vmax)
     for i, e in enumerate(index["skills"]):
         if e.get("invocation_disabled"):
             continue  # 未注册的本来就不可调用，不参与停用建议
         s, hits = bag[i]
         sem_pts, label = fusion_points(sem[i], vec[i] if vec else None)
+        if s <= 0:
+            # 同 query：关键词零命中的语义捞回项单独成桶，不与证据型命中混排
+            if sem_pts >= 8 and (not vec or i in rescued):
+                rescued_useful.append((sem_pts, [label or f"tfidf≈{sem[i]:.2f}"], e))
+            else:
+                unused.append(e)
+            continue
         s += sem_pts
         if label:
             hits.append(label)
-        if s > 0:
-            useful.append((s, hits, e))
-        else:
-            unused.append(e)
+        useful.append((s, hits, e))
     useful.sort(key=lambda x: (-x[0], x[2]["name"]))
+    rescued_useful.sort(key=lambda x: -x[0])
     record_hits("suggest", task, [e["name"] for _, _, e in useful],
                 [e["name"] for e in unused])
     if as_json:
         print(json.dumps({
             "task": task, "terms": sorted(terms),
+            "retrieval": {"mode": mode, "elapsed_s": round(elapsed, 3)},
             "useful": [{"name": e["name"], "source": e["source"], "score": s,
                         "description": (e.get("description") or e.get("description_zh") or "")}
                        for s, hits, e in useful],
+            "semantic_only": [{"name": e["name"], "source": e["source"], "score": s,
+                               "description": (e.get("description") or e.get("description_zh") or "")}
+                              for s, hits, e in rescued_useful],
             "unused": [e["name"] for e in unused],
         }, ensure_ascii=False, indent=1))
         return
-    print(f"任务「{task}」→ 扩展检索词 {len(terms)} 个：{len(useful)} 个相关候选，{len(unused)} 个本次用不到。\n")
+    print(f"任务「{task}」→ 扩展检索词 {len(terms)} 个：{len(useful)} 个相关候选"
+          f" + {len(rescued_useful)} 个语义候选，{len(unused)} 个本次用不到。")
+    print(f" 检索方式：{mode} · 耗时 {fmt_elapsed(elapsed)}\n")
     print(f"── 任务相关候选（{len(useful)} 个，按相关度排序，仍需读原文核实）──\n")
     for i, (s, hits, e) in enumerate(useful[:top], 1):
         desc = (e.get("description") or e.get("description_zh") or "（无描述）")
@@ -1187,6 +1286,15 @@ def cmd_suggest(task, top=10, as_json=False):
         print(f"    命中: {', '.join(hits[:5])}\n")
     if len(useful) > top:
         print(f" （另有 {len(useful) - top} 个相关候选未展开）\n")
+    if rescued_useful:
+        print(f"── 语义候选（{len(rescued_useful)} 个：关键词零命中，全靠语义捞回）──")
+        print("   可信度低于上面，推荐前先读原文核实。\n")
+        for i, (s, hits, e) in enumerate(rescued_useful[:top], 1):
+            desc = (e.get("description") or e.get("description_zh") or "（无描述）")
+            if len(desc) > 120:
+                desc = desc[:120] + "…"
+            print(f" S{i}. [{e['name']}]  (来源:{e['source']}  语义分:{s})")
+            print(f"    {desc}\n")
     print(f"── 本次任务用不到（{len(unused)} 个）——「可暂时关掉」的候选 ──")
     print("   注意：用不到≠没用，只是这个任务不需要；关哪些、关不关由用户定。\n")
     by_source = {}
@@ -1199,8 +1307,47 @@ def cmd_suggest(task, top=10, as_json=False):
     print("   恢复=用户去技能设置里重新打开。本脚本只读，永不自作主张停用。")
 
 
-def cmd_semantic():
+def human_size(n):
+    """纯函数：字节数 → 给人看的字符串。缓存多大、要不要清，得让用户看得见。"""
+    for unit in ("B", "KB", "MB", "GB"):
+        if n < 1024 or unit == "GB":
+            return f"{n:.0f}{unit}" if unit == "B" else f"{n:.1f}{unit}"
+        n = n / 1024.0
+
+
+def cache_info(path=None):
+    """纯读：向量缓存在不在、多大、多少条、哪一维、对应哪个模型。
+    缓存是隐形的——用户不知道它在那、换模型会不会残留（2026-10-26 挑刺⑥）。"""
+    path = path or EMBED_CACHE_PATH
+    if not os.path.isfile(path):
+        return None
+    try:
+        with open(path, encoding="utf-8") as f:
+            data = json.load(f)
+    except Exception:
+        return {"path": path, "broken": True, "size": os.path.getsize(path)}
+    return {"path": path, "size": os.path.getsize(path),
+            "n": len(data.get("names", [])),
+            "dim": len(data["vectors"][0]) if data.get("vectors") else 0,
+            "key": data.get("key")}
+
+
+def clear_embed_cache(path=None):
+    path = path or EMBED_CACHE_PATH
+    if not os.path.isfile(path):
+        print(f" · 向量缓存不存在，无需清理：{path}")
+        return
+    size = os.path.getsize(path)
+    os.remove(path)
+    print(f" ✓ 已删除向量缓存：{human_size(size)}（{path}）")
+    print("   下次需要时自动重算（首次慢，之后走缓存）。")
+
+
+def cmd_semantic(clear_cache=False):
     """语义后端自检：探测到什么、用什么模型、缓存状态；没探测到说明怎么开。"""
+    if clear_cache:
+        clear_embed_cache()
+        return
     index = load_index()
     backend = resolve_semantic_backend(force=True)
     print("LJC 语义后端自检")
@@ -1220,9 +1367,21 @@ def cmd_semantic():
     if table:
         dim = len(next(iter(table.values())))
         print(f" 向量：{len(table)} 条 × {dim} 维（{source}）")
-        print(f" 缓存：{EMBED_CACHE_PATH}")
     else:
         print(f" ⚠ 编码未成功：{source} —— 本次检索将回退词袋")
+    info = cache_info()
+    if info is None:
+        print(f" 缓存：无（{EMBED_CACHE_PATH}）")
+    elif info.get("broken"):
+        print(f" ⚠ 缓存文件损坏（{human_size(info['size'])}）—— 下次检索会重算覆盖；"
+              f"也可 find.py semantic --clear-cache")
+    else:
+        stale = "（与当前模型不一致，下次将重算）" if info.get("key") != backend["key"] else ""
+        print(f" 缓存：{human_size(info['size'])} · {info['n']} 条 × {info['dim']} 维"
+              f" · 模型 {info.get('key')}{stale}")
+    print(f" 路径：{EMBED_CACHE_PATH}")
+    print(" 清理：python3 find.py semantic --clear-cache"
+          "（换模型会自动作废，缓存 key 含 引擎:模型名）")
 
 
 def cmd_list():
@@ -1251,7 +1410,10 @@ def cmd_doctor():
         return
     index = load_index()
     try:
-        built = _t.mktime(_t.strptime(index.get("built_at", ""), "%Y-%m-%d %H:%M"))
+        raw = index.get("built_at", "")
+        # 兼容两种精度：built_at 改秒级后旧解析式一直抛异常 → 误报 index-unreadable
+        fmt = "%Y-%m-%d %H:%M:%S" if len(raw) > 16 else "%Y-%m-%d %H:%M"
+        built = _t.mktime(_t.strptime(raw, fmt))
         age = (_t.time() - built) / 60
         mark = "✓" if age < 120 else "⚠"
         print(f" {mark} 索引：{index.get('n_skills')} 个技能，"
@@ -1292,11 +1454,22 @@ def cmd_doctor():
     except Exception:
         pass
     b = resolve_semantic_backend()
+    info = cache_info()
     if b:
-        print(f" ✓ 语义后端：{SEM_STATE.get('source') or b['key']}"
-              f"（向量召回已启用；缓存 {os.path.basename(EMBED_CACHE_PATH)}）")
+        extra = ""
+        if info and not info.get("broken"):
+            stale = "·与当前模型不一致" if info.get("key") != b["key"] else ""
+            extra = f"；缓存 {human_size(info['size'])} / {info['n']} 条{stale}"
+        elif not info:
+            extra = "；缓存 无"
+        print(f" ✓ 语义后端：{SEM_STATE.get('source') or b['key']}{extra}")
+        print(f"   缓存文件：{EMBED_CACHE_PATH}")
+        print("   清理：python3 find.py semantic --clear-cache")
     else:
         print(f" · 语义后端未启用：{SEM_STATE['reason']}")
+        if info and not info.get("broken"):
+            print(f"   ⚠ 残留缓存 {human_size(info['size'])}（模型 {info.get('key')}）"
+                  f" —— 当前用不上，可 semantic --clear-cache 清掉")
         print("   （不影响使用：已回退内置 TF-IDF 词袋检索）")
     print("\n结论：" + (f"发现 {len(problems)} 项待处理 → {', '.join(problems)}"
                        if problems else "全部正常"))
@@ -1325,7 +1498,8 @@ def main():
     if len(sys.argv) >= 2 and sys.argv[1] in ("query", "suggest"):
         maybe_reexec(needed=reexec_needed(sys.argv))
     elif len(sys.argv) >= 2 and sys.argv[1] == "semantic":
-        maybe_reexec()
+        # 只是清缓存的话不必为模型换解释器
+        maybe_reexec(needed="--clear-cache" not in sys.argv)
     if len(sys.argv) < 2:
         print(__doc__)
         return
@@ -1367,7 +1541,7 @@ def main():
     elif cmd == "doctor":
         cmd_doctor()
     elif cmd == "semantic":
-        cmd_semantic()
+        cmd_semantic(clear_cache="--clear-cache" in sys.argv)
     elif cmd == "list":
         cmd_list()
     else:

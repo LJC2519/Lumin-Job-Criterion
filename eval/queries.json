@@ -1,0 +1,109 @@
+{
+  "_comment": [
+    "LJC 检索评估集 v1 —— 一条可复跑的尺子。",
+    "用途：换模型 / 改融合权重 / 改术语映射之前先 --save 存基线，改完 --compare，",
+    "      否则「改完感觉变好了」全是拍脑袋（2026-10-26 换 bge-m3 时就是手写脚本临时 A/B 的）。",
+    "字段：",
+    "  query    真实用户会说的话（不是抽象需求）",
+    "  kind     类别，用于分组看哪一类是短板：zh=中文直白 / en=英文 / oral=口语跨语言",
+    "  accept   可接受的技能名（任一个命中即算通过）",
+    "  must_not 已知的错误答案：命中即判失败（比 accept 更有区分度，见 _discriminating）",
+    "  note     为什么这条用例有价值",
+    "维护纪律：accept 只能按「人判断的正确答案」填，不能按「当前工具返回什么」填——",
+    "          后者等于用现状给自己打分，评估集就失效了。"
+  ],
+  "_known_debt": [
+    "v1 基线（2026-10-26）：top1 16/22，英文类最弱。剩余 6 条失败（9/11/14/16/21/22）",
+    "同源：查询里的通用词撞上了别家技能的 name（audit→security-audit、python→python-patterns、",
+    "docx/xlsx→docx、xlsx），而真正对的技能只在 desc 里出现域词（agreement/rebuttal）。",
+    "★ 已证伪的方案：IDF 降权。实测 audit 的 df 只有 9（权重 0.72），agreement 权重 1.0，",
+    "  加权后 security-audit 仍 40 分 vs contract-review 15 分 —— 根因是权重结构",
+    "  （name 段落匹配 40 分 vs desc 15 分），不是词频。继续调词袋权重是无底洞。",
+    "★ 正解在别处：这属于「能力匹配」问题（关键词命中 ≠ 能干这活），交给宿主模型",
+    "  读候选 SKILL.md 原文做 rerank —— 见 SKILL.md 第 2 步的 rerank 循环。"
+  ],
+  "cases": [
+    {"id": 1, "query": "帮我找个能审合同的", "kind": "zh",
+     "accept": ["contract-review", "contract-review-pro"],
+     "note": "曾零命中，靠补术语映射修复；防回归"},
+
+    {"id": 2, "query": "pdf 转 word", "kind": "zh",
+     "accept": ["pdf"], "note": "中英混排切词基线"},
+
+    {"id": 3, "query": "画一个流程图", "kind": "zh",
+     "accept": ["editorial-diagram-designer", "drawio-reconstruction"],
+     "must_not": ["writing-shape"],
+     "note": "实测翻车点：paraphrase 模型给 writing-shape（错），bge-m3 给对"},
+
+    {"id": 4, "query": "做一份 PPT", "kind": "zh",
+     "accept": ["workbuddy-pptx", "pptx", "tencent-pptx"],
+     "note": "加中文停用词前 top1 是 tencent-docs-sheet-generation（完全跑偏）；加停用词后变 tencent-pptx —— 修复有效，但 v1 期望值没列它，被判成失败"},
+
+    {"id": 5, "query": "生成一份 Excel 表", "kind": "zh",
+     "accept": ["workbuddy-sheet-generation", "workbuddy-sheetagent",
+                "tencent-docs-sheet-generation"],
+     "note": "腾讯文档表格生成也是合理答案，v1 曾把它判错 —— 期望值写窄了，不是检索的锅"},
+
+    {"id": 6, "query": "帮我审查这段代码的安全性", "kind": "zh",
+     "accept": ["security-review", "security-audit", "code-review"]},
+
+    {"id": 7, "query": "帮我写测试用例", "kind": "zh",
+     "accept": ["tdd", "python-testing"]},
+
+    {"id": 8, "query": "把一个大任务拆成小任务", "kind": "zh",
+     "accept": ["ljc", "to-tickets", "to-spec"],
+     "note": "本技能自己的主责，必须能召回"},
+
+    {"id": 9, "query": "audit an agreement before signing", "kind": "en",
+     "accept": ["contract-review", "contract-review-pro"],
+     "note": "纯英文未登录词，词袋基本失效"},
+
+    {"id": 10, "query": "convert pdf to word", "kind": "en",
+     "accept": ["pdf"]},
+
+    {"id": 11, "query": "write unit tests for my python code", "kind": "en",
+     "accept": ["python-testing", "tdd"]},
+
+    {"id": 12, "query": "review my code for security issues", "kind": "en",
+     "accept": ["security-review", "security-audit", "code-review"],
+     "note": "code-review 也算合理答案，v1 判错过"},
+
+    {"id": 13, "query": "create a slide deck from this outline", "kind": "en",
+     "accept": ["workbuddy-pptx", "pptx"]},
+
+    {"id": 14, "query": "extract tables from a scanned document", "kind": "en",
+     "accept": ["workbuddy-sheetagent"],
+     "note": "实测翻车点：paraphrase 给 printable-study-sheet（错）"},
+
+    {"id": 15, "query": "我想知道签这个合同会不会有坑", "kind": "oral",
+     "accept": ["contract-review", "contract-review-pro"],
+     "must_not": ["printable-study-sheet"],
+     "note": "口语化、与技能描述字符零重叠"},
+
+    {"id": 16, "query": "老师给的修改意见怎么逐条回复", "kind": "oral",
+     "accept": ["light-review-rebuttal", "rebuttal-guidance"],
+     "note": "bge-m3 也失败过（给 printable-study-sheet）"},
+
+    {"id": 17, "query": "论文投稿前帮我检查一遍", "kind": "oral",
+     "accept": ["pre-submission-reviewer", "light-typesetting", "paper-polish"],
+     "note": "paper-polish 是润色不是投稿检查，但方向一致，v1 判过严"},
+
+    {"id": 18, "query": "帮我把长文本里的结构化字段抽出来", "kind": "oral",
+     "accept": ["regex-vs-llm-structured-text"]},
+
+    {"id": 19, "query": "我想画一个知识图谱", "kind": "oral",
+     "accept": ["graphify"]},
+
+    {"id": 20, "query": "帮我把这个项目交接给下一个人", "kind": "oral",
+     "accept": ["handoff", "claude-handoff"]},
+
+    {"id": 21, "query": "engagement letter 里哪些条款对我方不利", "kind": "en",
+     "accept": ["contract-review", "contract-review-pro"],
+     "note": "实测翻车点：查询文本拼接把 top1 顶成 intro-drafter（错），改为只用原话后修好"},
+
+    {"id": 22, "query": "扫描件里的表格能不能自动摘出来", "kind": "oral",
+     "accept": ["workbuddy-sheetagent"],
+     "must_not": ["printable-study-sheet"],
+     "note": "中文口语 + 跨语言，两个引擎都容易失败"}
+  ]
+}

@@ -324,6 +324,16 @@ def _fake_index():
     ]}
 
 
+def _tiny_index():
+    """分区测试用的最小索引：hit 能被关键词命中，strong/weak 都命中不了。"""
+    return {"built_at": "2026-10-26 00:00:00", "skills": [
+        {"name": "hit", "source": "x",
+         "description": "convert pdf to word documents", "description_zh": ""},
+        {"name": "strong", "source": "x", "description": "zzz", "description_zh": ""},
+        {"name": "weak", "source": "x", "description": "qqq", "description_zh": ""},
+    ]}
+
+
 def _stub_backend():
     """关键词式假后端（不联网、不加载模型）：命中合同语义词→[1,0]，否则→[0,1]。
     不用整串查表，是为了不被 _entry_doc 的拼接细节绊倒。"""
@@ -565,6 +575,166 @@ class TestSemanticBackend(unittest.TestCase):
         b = _fake_index()
         b["built_at"] = "2026-10-27 00:00:00"
         self.assertNotEqual(a, find.index_fingerprint(b))
+
+
+class TestChineseStopwords(unittest.TestCase):
+    """评估集 #4 逼出来的：量词短语不该当检索词。"""
+
+    def test_measure_word_dropped(self):
+        terms = find.expand_query("做一份 PPT")
+        self.assertNotIn("做一份", terms)
+        self.assertIn("ppt", terms)
+
+    def test_filler_dropped_but_domain_word_kept(self):
+        terms = find.expand_query("帮我 合同")
+        self.assertNotIn("帮我", terms)
+        self.assertIn("合同", terms)
+
+    def test_english_stopwords_still_work(self):
+        terms = find.expand_query("audit an agreement")
+        self.assertNotIn("an", terms)
+        self.assertIn("audit", terms)
+
+
+class TestRetrievalMode(unittest.TestCase):
+    """挑刺⑦：一次查询跑完，用户必须能看出这次到底用没用向量。"""
+
+    def test_vec_used(self):
+        find.SEM_STATE["source"] = "sentence-transformers m · 缓存"
+        self.assertIn("词袋 + 向量", find.retrieval_mode([0.9, 0.2]))
+
+    def test_backend_but_no_vec(self):
+        find.SEM_STATE["reason"] = "编码失败"
+        self.assertIn("未生效", find.retrieval_mode([], backend={"key": "x"}))
+
+    def test_lazy_skipped_is_explained(self):
+        """懒加载跳过时不能含糊地说「仅词袋」，要说清楚为什么没加载模型。"""
+        out = find.retrieval_mode([], backend=None, n_bag_hits=12)
+        self.assertIn("12", out)
+        self.assertIn("未加载模型", out)
+
+    def test_no_backend_at_all(self):
+        find.SEM_STATE["reason"] = "未安装嵌入库"
+        self.assertIn("未安装嵌入库", find.retrieval_mode([], backend=None, n_bag_hits=0))
+
+
+class TestSemanticPartition(unittest.TestCase):
+    """挑刺②：语义捞回项不得与关键词命中项混在同一列。"""
+
+    def test_rescued_goes_to_separate_bucket(self):
+        idx = _tiny_index()
+        # hit：关键词命中；strong：零命中但语义强 → 捞回；weak：语义弱 → 丢弃
+        scored, rescued, hidden = find.partition_results(
+            idx, {"pdf"}, sem=[0.10, 0.95, 0.02])
+        self.assertEqual([e["name"] for _, _, e in scored], ["hit"])
+        self.assertEqual([e["name"] for _, _, e in rescued], ["strong"])
+        self.assertEqual(hidden, [])
+
+    def test_disabled_rescued_not_mixed_into_callable(self):
+        """捞回项若本身未注册，仍归未注册分区，不得冒充可调用。"""
+        idx = _tiny_index()
+        idx["skills"].append({"name": "off", "source": "x", "description": "d",
+                              "invocation_disabled": True})
+        scored, rescued, hidden = find.partition_results(
+            idx, {"pdf"}, sem=[0.10, 0.95, 0.02, 0.95])
+        self.assertEqual([e["name"] for _, _, e in rescued], ["strong"])
+        self.assertEqual([e["name"] for _, _, e in hidden], ["off"])
+
+    def test_disabled_keyword_hit_also_hidden(self):
+        idx = _tiny_index()
+        idx["skills"][0]["invocation_disabled"] = True
+        scored, rescued, hidden = find.partition_results(idx, {"pdf"}, sem=[0.1, 0.9, 0.0])
+        self.assertEqual(scored, [])
+        self.assertEqual([e["name"] for _, _, e in hidden], ["hit"])
+
+
+class TestCacheGovernance(unittest.TestCase):
+    """挑刺⑥：缓存不该是隐形的。"""
+
+    def test_human_size(self):
+        self.assertEqual(find.human_size(512), "512B")
+        self.assertTrue(find.human_size(2048).endswith("KB"))
+        self.assertTrue(find.human_size(5 * 1024 * 1024).endswith("MB"))
+
+    def test_cache_info_and_clear(self):
+        d = tempfile.mkdtemp()
+        try:
+            p = os.path.join(d, "embeddings.json")
+            with open(p, "w", encoding="utf-8") as f:
+                json.dump({"fingerprint": "fp", "key": "st:m", "names": ["a", "b"],
+                           "vectors": [[0.1] * 8, [0.2] * 8]}, f)
+            info = find.cache_info(p)
+            self.assertEqual(info["n"], 2)
+            self.assertEqual(info["dim"], 8)
+            self.assertEqual(info["key"], "st:m")
+            self.assertGreater(info["size"], 0)
+            self.assertIsNone(find.cache_info(os.path.join(d, "nope.json")))
+            find.clear_embed_cache(p)
+            self.assertFalse(os.path.isfile(p))
+        finally:
+            shutil.rmtree(d, ignore_errors=True)
+
+    def test_clear_missing_is_not_an_error(self):
+        find.clear_embed_cache(os.path.join(tempfile.gettempdir(), "ljc-no-such-cache.json"))
+
+    def test_stale_cache_detected_when_model_changed(self):
+        """缓存 key 里带模型名——换模型必须能看出来，不能静默复用旧向量。"""
+        d = tempfile.mkdtemp()
+        try:
+            p = os.path.join(d, "embeddings.json")
+            with open(p, "w", encoding="utf-8") as f:
+                json.dump({"fingerprint": "fp", "key": "st:old-model",
+                           "names": ["a"], "vectors": [[0.1] * 4]}, f)
+            self.assertNotEqual(find.cache_info(p)["key"], "st:new-model")
+        finally:
+            shutil.rmtree(d, ignore_errors=True)
+
+
+class TestEvalHarness(unittest.TestCase):
+    """评估集的度量与对比逻辑——它决定「改进」这个结论可不可信。"""
+
+    @staticmethod
+    def _row(i, kind="zh", hit1=True, hit3=True, recall=True, passed=True, bad=()):
+        return {"id": i, "kind": kind, "hit1": hit1, "hit3": hit3, "recall": recall,
+                "violated": list(bad), "passed": passed and not bad, "elapsed_s": 0.01}
+
+    def setUp(self):
+        sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(
+            os.path.abspath(__file__))), "eval"))
+
+    def test_summarize(self):
+        import run_eval
+        rows = [self._row(1), self._row(2, hit1=False, passed=False),
+                self._row(3, kind="en"), self._row(4, bad=["x"])]
+        s = run_eval.summarize(rows)
+        self.assertEqual(s["cases"], 4)
+        self.assertEqual(s["hit1"], 3)
+        self.assertEqual(s["violated"], 1)
+        self.assertEqual(s["by_kind"]["en"]["n"], 1)
+        self.assertEqual(s["by_kind"]["zh"]["n"], 3)
+
+    def test_must_not_violation_fails_even_if_top1_right(self):
+        """命中已知错误答案 → 即使 top1 对也判失败（比正向断言更有区分度）。"""
+        r = self._row(1, passed=True, bad=["printable-study-sheet"])
+        self.assertFalse(r["passed"])
+
+    def test_compare_flags_nondiscriminating(self):
+        import run_eval
+        cur = [self._row(1), self._row(2, passed=False), self._row(3), self._row(4, passed=False)]
+        # 基线：1 通过、2 失败、3 失败、4 失败
+        base = [self._row(1), self._row(2, passed=False),
+                self._row(3, passed=False), self._row(4, passed=False)]
+        res = run_eval.compare_rows(cur, base)
+        self.assertEqual(res["better"], [3], "3 从失败变通过 = 真改进")
+        self.assertEqual(res["both_pass"], [1], "1 两次都过 = 无区分度")
+        self.assertEqual(res["worse"], [])
+        self.assertEqual(sorted(res["both_fail"]), [2, 4])
+
+    def test_compare_detects_regression(self):
+        import run_eval
+        cur = [self._row(1, passed=False)]
+        base = [self._row(1)]
+        self.assertEqual(run_eval.compare_rows(cur, base)["worse"], [1])
 
 
 if __name__ == "__main__":

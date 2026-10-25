@@ -1,0 +1,491 @@
+{
+ "saved_at": "2026-10-26 02:22:31",
+ "rows": [
+  {
+   "id": 1,
+   "query": "帮我找个能审合同的",
+   "kind": "zh",
+   "top1": "contract-review",
+   "top3": [
+    "contract-review",
+    "contract-review-pro",
+    "receiving-code-review"
+   ],
+   "hit1": true,
+   "hit3": true,
+   "recall": true,
+   "violated": [],
+   "passed": true,
+   "elapsed_s": 0.008,
+   "mode": "仅词袋（关键词已命中 36 个 ≥ 3，未加载模型以保持秒回）",
+   "accept": [
+    "contract-review",
+    "contract-review-pro"
+   ]
+  },
+  {
+   "id": 2,
+   "query": "pdf 转 word",
+   "kind": "zh",
+   "top1": "pdf",
+   "top3": [
+    "pdf",
+    "docx",
+    "light-file-reading"
+   ],
+   "hit1": true,
+   "hit3": true,
+   "recall": true,
+   "violated": [],
+   "passed": true,
+   "elapsed_s": 0.005,
+   "mode": "仅词袋（关键词已命中 20 个 ≥ 3，未加载模型以保持秒回）",
+   "accept": [
+    "pdf"
+   ]
+  },
+  {
+   "id": 3,
+   "query": "画一个流程图",
+   "kind": "zh",
+   "top1": "editorial-diagram-designer",
+   "top3": [
+    "editorial-diagram-designer",
+    "drawio-reconstruction",
+    "figure-designer"
+   ],
+   "hit1": true,
+   "hit3": true,
+   "recall": true,
+   "violated": [],
+   "passed": true,
+   "elapsed_s": 0.006,
+   "mode": "仅词袋（关键词已命中 23 个 ≥ 3，未加载模型以保持秒回）",
+   "accept": [
+    "editorial-diagram-designer",
+    "drawio-reconstruction"
+   ]
+  },
+  {
+   "id": 4,
+   "query": "做一份 PPT",
+   "kind": "zh",
+   "top1": "tencent-pptx",
+   "top3": [
+    "tencent-pptx",
+    "workbuddy-pptx",
+    "wecom-unified"
+   ],
+   "hit1": true,
+   "hit3": true,
+   "recall": true,
+   "violated": [],
+   "passed": true,
+   "elapsed_s": 0.003,
+   "mode": "仅词袋（关键词已命中 15 个 ≥ 3，未加载模型以保持秒回）",
+   "accept": [
+    "workbuddy-pptx",
+    "pptx",
+    "tencent-pptx"
+   ]
+  },
+  {
+   "id": 5,
+   "query": "生成一份 Excel 表",
+   "kind": "zh",
+   "top1": "tencent-docs-sheet-generation",
+   "top3": [
+    "tencent-docs-sheet-generation",
+    "workbuddy-sheet-generation",
+    "light-file-reading"
+   ],
+   "hit1": true,
+   "hit3": true,
+   "recall": true,
+   "violated": [],
+   "passed": true,
+   "elapsed_s": 0.003,
+   "mode": "仅词袋（关键词已命中 7 个 ≥ 3，未加载模型以保持秒回）",
+   "accept": [
+    "workbuddy-sheet-generation",
+    "workbuddy-sheetagent",
+    "tencent-docs-sheet-generation"
+   ]
+  },
+  {
+   "id": 6,
+   "query": "帮我审查这段代码的安全性",
+   "kind": "zh",
+   "top1": "security-audit",
+   "top3": [
+    "security-audit",
+    "security-review",
+    "light-review-rebuttal"
+   ],
+   "hit1": true,
+   "hit3": true,
+   "recall": true,
+   "violated": [],
+   "passed": true,
+   "elapsed_s": 0.006,
+   "mode": "仅词袋（关键词已命中 34 个 ≥ 3，未加载模型以保持秒回）",
+   "accept": [
+    "security-review",
+    "security-audit",
+    "code-review"
+   ]
+  },
+  {
+   "id": 7,
+   "query": "帮我写测试用例",
+   "kind": "zh",
+   "top1": "tdd",
+   "top3": [
+    "tdd",
+    "python-testing",
+    "osint-investigation"
+   ],
+   "hit1": true,
+   "hit3": true,
+   "recall": true,
+   "violated": [],
+   "passed": true,
+   "elapsed_s": 0.004,
+   "mode": "仅词袋（关键词已命中 14 个 ≥ 3，未加载模型以保持秒回）",
+   "accept": [
+    "tdd",
+    "python-testing"
+   ]
+  },
+  {
+   "id": 8,
+   "query": "把一个大任务拆成小任务",
+   "kind": "zh",
+   "top1": "ljc",
+   "top3": [
+    "ljc",
+    "wayfinder",
+    "handoff"
+   ],
+   "hit1": true,
+   "hit3": true,
+   "recall": true,
+   "violated": [],
+   "passed": true,
+   "elapsed_s": 15.055,
+   "mode": "词袋 + 向量（sentence-transformers BAAI/bge-m3 · 缓存）",
+   "accept": [
+    "ljc",
+    "to-tickets",
+    "to-spec"
+   ]
+  },
+  {
+   "id": 9,
+   "query": "audit an agreement before signing",
+   "kind": "en",
+   "top1": "security-audit",
+   "top3": [
+    "security-audit",
+    "receiving-code-review",
+    "light-memory-pm"
+   ],
+   "hit1": false,
+   "hit3": false,
+   "recall": false,
+   "violated": [],
+   "passed": false,
+   "elapsed_s": 0.006,
+   "mode": "仅词袋（关键词已命中 16 个 ≥ 3，未加载模型以保持秒回）",
+   "accept": [
+    "contract-review",
+    "contract-review-pro"
+   ]
+  },
+  {
+   "id": 10,
+   "query": "convert pdf to word",
+   "kind": "en",
+   "top1": "pdf",
+   "top3": [
+    "pdf",
+    "docx",
+    "light-file-reading"
+   ],
+   "hit1": true,
+   "hit3": true,
+   "recall": true,
+   "violated": [],
+   "passed": true,
+   "elapsed_s": 0.004,
+   "mode": "仅词袋（关键词已命中 20 个 ≥ 3，未加载模型以保持秒回）",
+   "accept": [
+    "pdf"
+   ]
+  },
+  {
+   "id": 11,
+   "query": "write unit tests for my python code",
+   "kind": "en",
+   "top1": "python-patterns",
+   "top3": [
+    "python-patterns",
+    "python-testing",
+    "codebase-design"
+   ],
+   "hit1": false,
+   "hit3": true,
+   "recall": true,
+   "violated": [],
+   "passed": false,
+   "elapsed_s": 0.006,
+   "mode": "仅词袋（关键词已命中 40 个 ≥ 3，未加载模型以保持秒回）",
+   "accept": [
+    "python-testing",
+    "tdd"
+   ]
+  },
+  {
+   "id": 12,
+   "query": "review my code for security issues",
+   "kind": "en",
+   "top1": "code-review",
+   "top3": [
+    "code-review",
+    "receiving-code-review",
+    "security-review"
+   ],
+   "hit1": true,
+   "hit3": true,
+   "recall": true,
+   "violated": [],
+   "passed": true,
+   "elapsed_s": 0.005,
+   "mode": "仅词袋（关键词已命中 45 个 ≥ 3，未加载模型以保持秒回）",
+   "accept": [
+    "security-review",
+    "security-audit",
+    "code-review"
+   ]
+  },
+  {
+   "id": 13,
+   "query": "create a slide deck from this outline",
+   "kind": "en",
+   "top1": "pptx",
+   "top3": [
+    "pptx",
+    "intro-drafter",
+    "scaffold-exercises"
+   ],
+   "hit1": true,
+   "hit3": true,
+   "recall": true,
+   "violated": [],
+   "passed": true,
+   "elapsed_s": 0.005,
+   "mode": "仅词袋（关键词已命中 20 个 ≥ 3，未加载模型以保持秒回）",
+   "accept": [
+    "workbuddy-pptx",
+    "pptx"
+   ]
+  },
+  {
+   "id": 14,
+   "query": "extract tables from a scanned document",
+   "kind": "en",
+   "top1": "docx",
+   "top3": [
+    "docx",
+    "pdf",
+    "regex-vs-llm-structured-text"
+   ],
+   "hit1": false,
+   "hit3": false,
+   "recall": false,
+   "violated": [],
+   "passed": false,
+   "elapsed_s": 0.005,
+   "mode": "仅词袋（关键词已命中 21 个 ≥ 3，未加载模型以保持秒回）",
+   "accept": [
+    "workbuddy-sheetagent"
+   ]
+  },
+  {
+   "id": 15,
+   "query": "我想知道签这个合同会不会有坑",
+   "kind": "oral",
+   "top1": "contract-review",
+   "top3": [
+    "contract-review",
+    "contract-review-pro",
+    "receiving-code-review"
+   ],
+   "hit1": true,
+   "hit3": true,
+   "recall": true,
+   "violated": [],
+   "passed": true,
+   "elapsed_s": 0.005,
+   "mode": "仅词袋（关键词已命中 7 个 ≥ 3，未加载模型以保持秒回）",
+   "accept": [
+    "contract-review",
+    "contract-review-pro"
+   ]
+  },
+  {
+   "id": 16,
+   "query": "老师给的修改意见怎么逐条回复",
+   "kind": "oral",
+   "top1": "wait-what",
+   "top3": [
+    "wait-what",
+    "code-review",
+    "grill-me"
+   ],
+   "hit1": false,
+   "hit3": false,
+   "recall": true,
+   "violated": [],
+   "passed": false,
+   "elapsed_s": 0.058,
+   "mode": "词袋 + 向量（sentence-transformers BAAI/bge-m3 · 缓存）",
+   "accept": [
+    "light-review-rebuttal",
+    "rebuttal-guidance"
+   ]
+  },
+  {
+   "id": 17,
+   "query": "论文投稿前帮我检查一遍",
+   "kind": "oral",
+   "top1": "paper-polish",
+   "top3": [
+    "paper-polish",
+    "light-paper-writing",
+    "light-typesetting"
+   ],
+   "hit1": true,
+   "hit3": true,
+   "recall": true,
+   "violated": [],
+   "passed": true,
+   "elapsed_s": 0.006,
+   "mode": "仅词袋（关键词已命中 31 个 ≥ 3，未加载模型以保持秒回）",
+   "accept": [
+    "pre-submission-reviewer",
+    "light-typesetting",
+    "paper-polish"
+   ]
+  },
+  {
+   "id": 18,
+   "query": "帮我把长文本里的结构化字段抽出来",
+   "kind": "oral",
+   "top1": "regex-vs-llm-structured-text",
+   "top3": [
+    "regex-vs-llm-structured-text",
+    "light-project-structure",
+    "light-system-design"
+   ],
+   "hit1": true,
+   "hit3": true,
+   "recall": true,
+   "violated": [],
+   "passed": true,
+   "elapsed_s": 0.007,
+   "mode": "仅词袋（关键词已命中 17 个 ≥ 3，未加载模型以保持秒回）",
+   "accept": [
+    "regex-vs-llm-structured-text"
+   ]
+  },
+  {
+   "id": 19,
+   "query": "我想画一个知识图谱",
+   "kind": "oral",
+   "top1": "graphify",
+   "top3": [
+    "graphify",
+    "editorial-diagram-designer",
+    "drawio-reconstruction"
+   ],
+   "hit1": true,
+   "hit3": true,
+   "recall": true,
+   "violated": [],
+   "passed": true,
+   "elapsed_s": 0.007,
+   "mode": "仅词袋（关键词已命中 25 个 ≥ 3，未加载模型以保持秒回）",
+   "accept": [
+    "graphify"
+   ]
+  },
+  {
+   "id": 20,
+   "query": "帮我把这个项目交接给下一个人",
+   "kind": "oral",
+   "top1": "handoff",
+   "top3": [
+    "handoff",
+    "context-and-decisions",
+    "claude-handoff"
+   ],
+   "hit1": true,
+   "hit3": true,
+   "recall": true,
+   "violated": [],
+   "passed": true,
+   "elapsed_s": 0.004,
+   "mode": "仅词袋（关键词已命中 11 个 ≥ 3，未加载模型以保持秒回）",
+   "accept": [
+    "handoff",
+    "claude-handoff"
+   ]
+  },
+  {
+   "id": 21,
+   "query": "engagement letter 里哪些条款对我方不利",
+   "kind": "en",
+   "top1": "writing-beats",
+   "top3": [
+    "writing-beats",
+    "writing-shape",
+    "context-and-decisions"
+   ],
+   "hit1": false,
+   "hit3": false,
+   "recall": true,
+   "violated": [],
+   "passed": false,
+   "elapsed_s": 0.007,
+   "mode": "仅词袋（关键词已命中 15 个 ≥ 3，未加载模型以保持秒回）",
+   "accept": [
+    "contract-review",
+    "contract-review-pro"
+   ]
+  },
+  {
+   "id": 22,
+   "query": "扫描件里的表格能不能自动摘出来",
+   "kind": "oral",
+   "top1": "xlsx",
+   "top3": [
+    "xlsx",
+    "tencent-docs-sheet-generation",
+    "workbuddy-sheet-generation"
+   ],
+   "hit1": false,
+   "hit3": false,
+   "recall": true,
+   "violated": [
+    "printable-study-sheet"
+   ],
+   "passed": false,
+   "elapsed_s": 0.005,
+   "mode": "仅词袋（关键词已命中 29 个 ≥ 3，未加载模型以保持秒回）",
+   "accept": [
+    "workbuddy-sheetagent"
+   ]
+  }
+ ]
+}
