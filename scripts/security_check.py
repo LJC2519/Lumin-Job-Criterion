@@ -1,13 +1,16 @@
 #!/usr/bin/env python3
 """lumin-job-criterion（LJC）· 技能安全检查器。
 
-对「准备推荐给用户的技能」做合规检查——本地技能目录或 GitHub 仓库均可。
+对「找到的技能」做合规检查——本地技能目录或 GitHub 仓库均可。
 纯标准库；检查是启发式的，结论分三档：
 
   PASS  未发现风险项
   WARN  有需要人工留意的项（缺 license、脚本里有网络调用等）
-  BLOCK 发现高危项（管道执行远程脚本、编码载荷、提示词注入、凭证泄漏）——
-        不要加载、不要执行
+  BLOCK 发现高危项（管道执行远程脚本、编码载荷、提示词注入、凭证泄漏）
+
+定位（2026-10-25 用户定调）：检查器只负责**把风险说清楚**——
+发现疑似不合规时逐条给出说明，不代用户否决；用不用由用户自行决定，
+LJC 一律不代为下载、安装或执行。
 
 用法：
   python3 security_check.py <本地目录路径>
@@ -53,6 +56,8 @@ WARN_PATTERNS = [
     ("subprocess shell=True", re.compile(r"subprocess\.[A-Za-z]+\([^)]*shell\s*=\s*True"), "script"),
     ("Node child_process.exec", re.compile(r"child_process\.exec"), "script"),
     ("超长单行（>20000 字符，混淆嫌疑）", None, "longline"),
+    ("脚本含裸 eval（动态执行）", re.compile(r"(?<![.\w])eval\s*\("), "script"),
+    ("引用私钥/凭证文件路径", re.compile(r"(id_rsa|id_ed25519|\.aws[/\\]credentials|\.netrc)"), "any"),
 ]
 
 
@@ -232,8 +237,10 @@ def report(target, findings, n_code, n_md, has_license):
         print(f"          {where}" + (f"  |  {sample}" if sample else ""))
     advice = {
         "PASS": "未发现风险项。可按流程推荐（仍建议读一遍 SKILL.md 原文）。",
-        "WARN": "有需人工留意的项。推荐时必须附上警告，由用户定夺。",
-        "BLOCK": "发现高危项。不要加载、不要执行、不要推荐；把发现如实告诉用户。",
+        "WARN": "有需人工留意的项。照常告诉用户这个技能存在，推荐时附上以上警告，由用户定夺。",
+        "BLOCK": "发现高危项。**不代用户否决**：照常告诉用户有这样一个东西，"
+                 "逐条说明以上风险点与可能影响，是否使用由用户自行决定；"
+                 "LJC 不代为下载、安装或执行。",
     }[verdict]
     print(f"\n  结论: {verdict} —— {advice}")
     print("  （启发式检查，已知会误报：讨论安全话题的技能自带关键词属正常，最终判断靠人）")
