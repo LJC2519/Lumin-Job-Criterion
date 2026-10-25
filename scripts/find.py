@@ -179,6 +179,12 @@ ZH_TO_EN = {
     "长文本": ["long document", "long text", "lengthy document"],
     "检查清单": ["checklist", "check list", "checklist review"],
     "遗漏": ["missing", "omission", "gap", "overlooked"],
+    # ── 合同/审查域（2026-10-26 补：实测「审合同」零命中的教训——
+    # 同义说法「合同把关 条款风险」命中的全是错技能，根因即缺这组映射）──
+    "合同": ["contract", "agreement", "legal review", "clause"],
+    "审": ["audit", "review", "inspect", "examine"],
+    "审查": ["audit", "review", "inspect"],
+    "把关": ["gatekeep", "verify", "quality check", "vet"],
 }
 
 

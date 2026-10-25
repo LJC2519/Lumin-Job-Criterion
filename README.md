@@ -4,18 +4,20 @@
 
 > A task-to-skill router: decompose your task, sweep local + GitHub catalogs, gate on security, and draw the coverage map.
 
-触发语句（技能模式）：「**请ljc为我指点迷津**」（LJC / ljc 大小写均可）。
-等价说法（歧义更小，推荐）：「**用 LJC 找技能**：\<任务\>」「**让 LJC 路由这个任务**：\<任务\>」。
+触发语句（技能模式）：「**请ljc为我指点迷津**」（LJC / ljc 大小写均可）。  
+等价说法（歧义更小，推荐）：「**用 LJC 找技能**：<任务>」「**让 LJC 路由这个任务**：<任务>」。
 
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)
+
 ![Python 3.8+](https://img.shields.io/badge/python-3.8%2B-blue.svg)
+
 ![纯标准库](https://img.shields.io/badge/deps-zero-brightgreen.svg)
 
 ## English
 
 **LJC (Lumin Job Criterion)** is a task-to-skill router: it decomposes your task into modules, sweeps your installed skills plus GitHub (repo radar + four skill catalogs), gates candidates through a security check, and draws a *task → skill coverage map* showing which skill covers what — and where the gaps are.
 
-Pure standard-library Python, zero dependencies. Skill-mode trigger: say “请ljc为我指点迷津” or “用 ljc 技能：\<task\>” (the registered skill name is `ljc`). All scripts also work standalone:
+Pure standard-library Python, zero dependencies. Skill-mode trigger: say “请ljc为我指点迷津” or “用 ljc 技能：<task>” (the registered skill name is `ljc`). All scripts also work standalone:
 
 ```bash
 python3 scripts/find.py query "convert word documents" --top 8   # search installed skills
@@ -71,9 +73,9 @@ ln -s "$PWD" ~/.workbuddy/skills/lumin-job-criterion
 
 （停用 = `rm` 符号链接，仓库本体不动。）
 
-> 技能注册名是 **`ljc`**（触发匹配用：用户说「请ljc为我指点迷津」或任何含
-> ljc 的消息即命中）；目录名与仓库名保持 `lumin-job-criterion` 不变。
-> 若自动触发偶有不灵，最稳的方式是点名：「用 ljc 技能：\<任务\>」。
+> 技能注册名是 **`ljc`**（触发匹配用：用户说「请ljc为我指点迷津」或任何含  
+> ljc 的消息即命中）；目录名与仓库名保持 `lumin-job-criterion` 不变。  
+> 若自动触发偶有不灵，最稳的方式是点名：「用 ljc 技能：<任务>」。
 
 ## 用法
 
@@ -110,13 +112,13 @@ python3 scripts/find.py list
 
 ## 四个检索通道
 
-| 通道 | 命令 | 特点 |
-|---|---|---|
-| 本地已装 | `find.py query` | 秒回零网络；自动识别「下载了但未注册」 |
-| GitHub 仓库雷达 | `github_search.py` | 搜索 API 按星排序；未认证 10 次/分 |
-| GitHub 技能目录 | `github_search.py --catalog` | 2 个社区 awesome + 2 个官方仓库（树形抓取）；7 天缓存，`--refresh` 强刷 |
-| SkillsMP（MCP 连接器） | 客户端的 SkillsMP MCP 工具 | 百万级 SKILL.md 聚合市场，覆盖面最广；接入了就用，没接入说清 |
-| 语义市场（可选） | LJC 流程内 curl SkillHub | 前几路不满意时再用 |
+| 通道                | 命令                           | 特点                                                 |
+| ----------------- | ---------------------------- | -------------------------------------------------- |
+| 本地已装              | `find.py query`              | 秒回零网络；自动识别「下载了但未注册」                                |
+| GitHub 仓库雷达       | `github_search.py`           | 搜索 API 按星排序；未认证 10 次/分                             |
+| GitHub 技能目录       | `github_search.py --catalog` | 2 个社区 awesome + 2 个官方仓库（树形抓取）；7 天缓存，`--refresh` 强刷 |
+| SkillsMP（MCP 连接器） | 客户端的 SkillsMP MCP 工具         | 百万级 SKILL.md 聚合市场，覆盖面最广；接入了就用，没接入说清                |
+| 语义市场（可选）          | LJC 流程内 curl SkillHub        | 前几路不满意时再用                                          |
 
 通道之间不短路：本地秒回但只覆盖已装；GitHub 覆盖开源公开；SkillsMP 面最广但质量参差。至少覆盖「本地 + GitHub + 其一市场」再下结论。
 
@@ -124,14 +126,14 @@ python3 scripts/find.py list
 
 每个候选推荐前必须过 `security_check.py`：
 
-- **BLOCK**：管道执行远程脚本、编码载荷、提示词注入、凭证泄漏——
+- **BLOCK**：管道执行远程脚本、编码载荷、提示词注入、凭证泄漏——  
   **照常告诉用户有这个东西**，逐条说明风险，由用户自行定夺（不代否决）
 - **WARN**：缺 license、脚本含网络调用、星数过低、仓库已归档——推荐时必须附警告
 - **PASS**：未发现风险项（仍建议读一遍原文）
 
-无论哪一档，LJC 都**不代为下载、安装或执行**——只给信息、路径和命令。
-启发式检查，会误报（讨论安全话题的技能自带关键词）；机器负责不漏报，最终判断靠人。
-本地已装候选可另跑 `jason-security-audit` 技能的 `audit.py` 深审（若装着）。
+无论哪一档，LJC 都**不代为下载、安装或执行**——只给信息、路径和命令。  
+启发式检查，会误报（讨论安全话题的技能自带关键词）；机器负责不漏报，最终判断靠人。  
+本地已装候选可另跑 `jason-security-audit` 技能的 `audit.py` 深审（若装着）。  
 GitHub 目标若是合集仓库（如 `anthropics/skills`），自动树形抽检其中 SKILL.md 与代码文件（封顶 15 + 5 个）。
 
 ## 更新检测
@@ -149,21 +151,21 @@ python3 scripts/find.py doctor                          # 一键自检
 
 三轨检测：
 
-| 来源类型 | 判定方式 | 精度 |
-|---|---|---|
-| git 仓库（ecc-study） | fetch + 本地 HEAD vs 上游 | 精确 |
-| tarball（已记录 SHA） | `git ls-remote` 比 SHA——不走 API、不吃限额 | 精确 |
-| tarball（未记录 SHA） | GitHub API 日期启发式 | 参考（对纯删除提交会误报） |
-| pinned | 暂停自动判定（上游更旧/有意分叉时） | — |
+| 来源类型              | 判定方式                               | 精度            |
+| ----------------- | ---------------------------------- | ------------- |
+| git 仓库（ecc-study） | fetch + 本地 HEAD vs 上游              | 精确            |
+| tarball（已记录 SHA）  | `git ls-remote` 比 SHA——不走 API、不吃限额 | 精确            |
+| tarball（未记录 SHA）  | GitHub API 日期启发式                   | 参考（对纯删除提交会误报） |
+| pinned            | 暂停自动判定（上游更旧/有意分叉时）                 | —             |
 
-输出分「已是最新 / 可更新 / 可能可更新 / 已固定 / 无法检测」五档，
+输出分「已是最新 / 可更新 / 可能可更新 / 已固定 / 无法检测」五档，  
 可更新的给出具体命令，本地单文件技能折叠成一行跳过。
 
-**标准更新流程**：重新下载 tarball → 跑 `--record <来源名>` 把新 SHA 写进
-`scripts/ljc_sources.json`（语义=本地已同步到该 commit）→ 之后检测零误报。
+**标准更新流程**：重新下载 tarball → 跑 `--record <来源名>` 把新 SHA 写进  
+`scripts/ljc_sources.json`（语义=本地已同步到该 commit）→ 之后检测零误报。  
 登记/固定来源：编辑 `scripts/ljc_sources.json`（形态说明见 `.example.json`）。
 
-更新纪律：**只检测不自动执行**——git 来源用户同意后 `git pull`，
+更新纪律：**只检测不自动执行**——git 来源用户同意后 `git pull`，  
 tarball 来源由 LJC 重新下载。
 
 ## 任务盘点与停用建议
@@ -205,17 +207,17 @@ lumin-job-criterion/
 
 ## 环境变量与扩展
 
-| 变量 / 文件 | 作用 | 默认 |
-|---|---|---|
-| `LJC_SKILLS_DIR` | 用户技能目录位置 | `~/.workbuddy/skills` |
-| `LJC_SKILLS_DIRS` | 完全自定义扫描根列表（冒号分隔，覆盖默认） | 无 |
-| `GITHUB_TOKEN` | GitHub API 认证（提高限额） | 无（未认证） |
-| `LJC_CACHE_DIR` | 技能目录缓存位置 | 脚本旁 `.cache/` |
-| `scripts/ljc_terms.json` | 用户自定义术语映射（复制示例文件创建，git 忽略） | 无 |
-| `scripts/ljc_sources.json` | tarball 来源登记（复制示例文件创建，git 忽略） | 无 |
+| 变量 / 文件                    | 作用                            | 默认                    |
+| -------------------------- | ----------------------------- | --------------------- |
+| `LJC_SKILLS_DIR`           | 用户技能目录位置                      | `~/.workbuddy/skills` |
+| `LJC_SKILLS_DIRS`          | 完全自定义扫描根列表（冒号分隔，覆盖默认）         | 无                     |
+| `GITHUB_TOKEN`             | GitHub API 认证（提高限额）           | 无（未认证）                |
+| `LJC_CACHE_DIR`            | 技能目录缓存位置                      | 脚本旁 `.cache/`         |
+| `scripts/ljc_terms.json`   | 用户自定义术语映射（复制示例文件创建，git 忽略）    | 无                     |
+| `scripts/ljc_sources.json` | tarball 来源登记（复制示例文件创建，git 忽略） | 无                     |
 
-索引扫描是**多根**的：用户技能目录 + WorkBuddy 内置技能
-（/Applications/…/workbuddy-builtin/skills，存在即自动纳入）+ 插件缓存
+索引扫描是**多根**的：用户技能目录 + WorkBuddy 内置技能  
+（/Applications/…/workbuddy-builtin/skills，存在即自动纳入）+ 插件缓存  
 （`~/.workbuddy/plugins/cache`，同插件多版本只取最新版，同名技能先到的根优先）。
 
 ## 测试
@@ -224,20 +226,20 @@ lumin-job-criterion/
 python3 tests/test_ljc.py   # 16 项，零网络零文件系统，秒级
 ```
 
-覆盖术语扩展、多词排序加成、停用标志检测、目录解析（markdown + 树形）、安全模式三档。
+覆盖术语扩展、多词排序加成、停用标志检测、目录解析（markdown + 树形）、安全模式三档。  
 新功能先写 RED 测试再实现——本仓库的纪律。
 
 ## FAQ / 故障排查
 
-| 症状 | 原因 | 解法 |
-|---|---|---|
-| GitHub 搜索 403 / 提示限额 | 未认证 search 10 次/分、core 60 次/时 | 设 `GITHUB_TOKEN`；或等限额重置 |
-| 目录抓取失败 | 网络不通或限额 | 有旧缓存会自动用并声明；`--refresh` 重试 |
-| SkillsMP 搜不到 | 脚本不直连（API 403、页面 JS 渲染） | 走 MCP 连接器；或 WebFetch 其搜索页 |
-| 索引结果过期 | 装了新技能没 build | 自动重建（<1 秒，下次 query 生效）；也可手动 `build` |
-| 安全检查误报 | 讨论安全话题的技能自带关键词 | 已知类；看命中行自己判断 |
-| 推荐了某技能但加载不了 | 它被作者禁用了模型调用 | 输出分区会标明「下载了，但没有注册」+ 开放路径 |
-| 中文查询 GitHub 命中少 | GitHub 搜索对中文效果差 | 脚本会警告；先想好英文关键词再搜 |
+| 症状                   | 原因                            | 解法                                  |
+| -------------------- | ----------------------------- | ----------------------------------- |
+| GitHub 搜索 403 / 提示限额 | 未认证 search 10 次/分、core 60 次/时 | 设 `GITHUB_TOKEN`；或等限额重置             |
+| 目录抓取失败               | 网络不通或限额                       | 有旧缓存会自动用并声明；`--refresh` 重试          |
+| SkillsMP 搜不到         | 脚本不直连（API 403、页面 JS 渲染）       | 走 MCP 连接器；或 WebFetch 其搜索页           |
+| 索引结果过期               | 装了新技能没 build                  | 自动重建（<1 秒，下次 query 生效）；也可手动 `build` |
+| 安全检查误报               | 讨论安全话题的技能自带关键词                | 已知类；看命中行自己判断                        |
+| 推荐了某技能但加载不了          | 它被作者禁用了模型调用                   | 输出分区会标明「下载了，但没有注册」+ 开放路径            |
+| 中文查询 GitHub 命中少      | GitHub 搜索对中文效果差               | 脚本会警告；先想好英文关键词再搜                    |
 
 ## 设计纪律
 
