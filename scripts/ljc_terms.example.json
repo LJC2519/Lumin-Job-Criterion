@@ -1,0 +1,7 @@
+{
+  "_说明": "复制本文件为同目录 ljc_terms.json 后生效（该文件已被 git 忽略，是你自己的本地扩展）。键=中文查询词，值=扩展出的英文检索词；你的映射优先于脚本内置映射。",
+  "模态": ["modal", "dialog"],
+  "看板": ["dashboard", "kanban"],
+  "出海": ["overseas", "cross-border", "going global"],
+  "工单": ["ticket", "tickets", "issue tracker"]
+}
