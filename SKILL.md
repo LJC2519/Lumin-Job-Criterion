@@ -188,7 +188,8 @@ python3 <LJC>/scripts/security_check.py <候选技能路径或 owner/repo>
 - **执行衔接**（2026-10-25 新增，分解完成后的自然延伸）：
   标「可并行」的独立任务 ≥2 个时，建议用户用 `dispatching-parallel-agents`
   并行执行；多阶段长项目建议 `light-orchestrator`（状态持久 + 断点恢复）；
-  代码类任务接 **to-spec → to-tickets**（均已开放）：先固化规格再拆工单
+  代码类任务走完整链：**to-spec 固化规格 → to-tickets 拆工单 →
+  implement / implement-spec 实施**（四个技能均已开放）
 - 问用户要不要现在加载某个技能开工（用 `Skill` 工具）
 - **本技能只读、只推荐**：安装任何技能必须用户明确同意，走 `find-skills`
   或 SkillsMP 的安装通道
