@@ -113,11 +113,15 @@ def api_get(url):
 
 
 def source_of(path):
-    """技能真实路径 → 来源目录名；本地自建技能返回 local:<name>。"""
-    if "/ecc-study/" in path:
-        return "ecc-study"  # ~/ecc-study 整个是一个 git 仓库
-    if "/skill-sources/" in path:
-        return path.split("/skill-sources/", 1)[1].split("/", 1)[0]
+    """技能真实路径 → 来源目录名；客户端托管（内置/插件缓存）返回 None。"""
+    if "/workbuddy-builtin/skills/" in path or "/plugins/cache/" in path:
+        return None  # 随客户端更新，不做检测
+    for marker in ("/skill-sources/", "/ecc-study/", "/light-skills/",
+                   "/supervisor-skills/"):
+        if marker in path:
+            if marker == "/ecc-study/":
+                return "ecc-study"
+            return path.split(marker, 1)[1].split("/", 1)[0] or marker.strip("/")
     if path.startswith(os.path.expanduser("~/.workbuddy/skills")):
         return "local:" + os.path.basename(path.rstrip("/"))
     return None
@@ -260,6 +264,7 @@ def main():
                    if s.startswith("local:") and r["state"] == "unknown-source"]
     results = [(s, n, r) for s, n, r in results
                if not (s.startswith("local:") and r["state"] == "unknown-source")]
+    managed = [e for e in entries if source_of(e.get("path", "")) is None]
     n_local = len(entries) - sum(n for _, n, _ in results)
     print(f"LJC 更新检测 —— {len(results) + len(local_plain)} 个来源 / {len(entries)} 个技能\n")
 
@@ -293,6 +298,9 @@ def main():
     if local_plain:
         print(f"── 本地自建/单文件技能（{sum(n for _, n in local_plain)} 个）──")
         print("   无上游概念（手动创建或市场直装），跳过更新检测\n")
+    if managed:
+        print(f"── 客户端托管技能（{len(managed)} 个）──")
+        print("   WorkBuddy 内置/插件缓存，随客户端自动更新，不检测\n")
 
     print("详细：")
     for s, n, r in results:

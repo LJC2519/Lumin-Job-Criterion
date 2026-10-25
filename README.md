@@ -186,10 +186,16 @@ lumin-job-criterion/
 
 | 变量 / 文件 | 作用 | 默认 |
 |---|---|---|
-| `LJC_SKILLS_DIR` | 技能目录位置 | `~/.workbuddy/skills` |
+| `LJC_SKILLS_DIR` | 用户技能目录位置 | `~/.workbuddy/skills` |
+| `LJC_SKILLS_DIRS` | 完全自定义扫描根列表（冒号分隔，覆盖默认） | 无 |
 | `GITHUB_TOKEN` | GitHub API 认证（提高限额） | 无（未认证） |
 | `LJC_CACHE_DIR` | 技能目录缓存位置 | 脚本旁 `.cache/` |
 | `scripts/ljc_terms.json` | 用户自定义术语映射（复制示例文件创建，git 忽略） | 无 |
+| `scripts/ljc_sources.json` | tarball 来源登记（复制示例文件创建，git 忽略） | 无 |
+
+索引扫描是**多根**的：用户技能目录 + WorkBuddy 内置技能
+（/Applications/…/workbuddy-builtin/skills，存在即自动纳入）+ 插件缓存
+（`~/.workbuddy/plugins/cache`，同插件多版本只取最新版，同名技能先到的根优先）。
 
 ## 测试
 

@@ -210,5 +210,26 @@ class TestShaComparison(unittest.TestCase):
         self.assertNotIn("pinned", out2["b"])
 
 
+class TestMultiRoot(unittest.TestCase):
+    def test_default_roots_multi(self):
+        import find
+        roots = find.default_roots()
+        self.assertIn(os.path.expanduser("~/.workbuddy/skills"), roots)
+        builtin = ("/Applications/WorkBuddy.app/Contents/Resources/app.asar.unpacked/"
+                   "resources/plugins/workbuddy-builtin/skills")
+        if os.path.isdir(builtin):
+            self.assertIn(builtin, roots)
+            self.assertGreater(len(roots), 2)  # 还有插件缓存根
+
+    def test_guess_source_new_roots(self):
+        import find
+        self.assertEqual(
+            find.guess_source("/Applications/WorkBuddy.app/C/x/workbuddy-builtin/skills/foo"),
+            "workbuddy-builtin")
+        self.assertEqual(
+            find.guess_source("/Users/x/.workbuddy/plugins/cache/org/plug/1.0/skills/s"),
+            "plugin")
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

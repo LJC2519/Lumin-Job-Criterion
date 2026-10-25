@@ -2,8 +2,8 @@
 """lumin-job-criterion（LJC）· 任务技能路由器——本地检索脚本。
 
 LJC = Lumin Job Criterion，触发语句「请ljc为我指点迷津」（大小写均可）。
-本脚本只管本地侧：在技能目录里按功能检索（目录可用环境变量
-LJC_SKILLS_DIR 覆盖，默认 ~/.workbuddy/skills）。
+本脚本只管本地侧：在技能目录里按功能检索。多根扫描（用户技能目录 +
+WorkBuddy 内置技能 + 插件缓存最新版，可用环境变量 LJC_SKILLS_DIRS 覆盖）。
 市场侧：GitHub 检索用同目录 github_search.py；SkillHub 语义搜索
 由 LJC 流程直接 curl。
 
@@ -209,70 +209,126 @@ def guess_source(real_path):
         return "ecc-study"
     if "/light-skills/" in real_path:
         return "light-skills"
+    if "/supervisor-skills/" in real_path:
+        return "supervisor-skills"
+    if "/workbuddy-builtin/skills/" in real_path:
+        return "workbuddy-builtin"
     if "/plugins/cache/" in real_path:
         return "plugin"
     return "local"
 
 
+def default_roots():
+    """扫描根列表（2026-10-25 扩为多根）：用户技能目录 + WorkBuddy 内置技能
+    + 插件缓存（cache/<org>/<plugin>/<version>/skills，每插件只取最新版，
+    避免同插件多版本重复索引）。
+    环境变量 LJC_SKILLS_DIRS（冒号分隔）可完全覆盖默认列表。"""
+    env = os.environ.get("LJC_SKILLS_DIRS")
+    if env:
+        return [os.path.expanduser(p) for p in env.split(":") if p.strip()]
+    roots = [SKILLS_DIR]
+    builtin = ("/Applications/WorkBuddy.app/Contents/Resources/app.asar.unpacked/"
+               "resources/plugins/workbuddy-builtin/skills")
+    if os.path.isdir(builtin):
+        roots.append(builtin)
+    cache = os.path.expanduser("~/.workbuddy/plugins/cache")
+    if os.path.isdir(cache):
+        for org in sorted(os.listdir(cache)):
+            org_dir = os.path.join(cache, org)
+            if not os.path.isdir(org_dir):
+                continue
+            for plugin in sorted(os.listdir(org_dir)):
+                plugin_dir = os.path.join(org_dir, plugin)
+                if not os.path.isdir(plugin_dir):
+                    continue
+                versions = [v for v in os.listdir(plugin_dir)
+                            if os.path.isdir(os.path.join(plugin_dir, v, "skills"))]
+                if not versions:
+                    continue
+                latest = max(versions,
+                             key=lambda v: os.path.getmtime(os.path.join(plugin_dir, v)))
+                roots.append(os.path.join(plugin_dir, latest, "skills"))
+    return roots
+
+
 def build_index():
+    roots = default_roots()
     entries = []
     broken = []
-    for name in sorted(os.listdir(SKILLS_DIR)):
-        path = os.path.join(SKILLS_DIR, name)
-        real = os.path.realpath(path)
-        if not os.path.isdir(real):
-            if os.path.islink(path):
-                broken.append(name)
+    seen = {}
+    collisions = []
+    for root in roots:
+        if not os.path.isdir(root):
             continue
-        skill_md = None
-        for cand in (os.path.join(real, "SKILL.md"),):
-            if os.path.isfile(cand):
-                skill_md = cand
-                break
-        if not skill_md:
-            # 个别技能 SKILL.md 不在根（如套件结构），向下找一层
-            for root, dirs, files in os.walk(real):
-                if "SKILL.md" in files:
-                    skill_md = os.path.join(root, "SKILL.md")
+        for name in sorted(os.listdir(root)):
+            path = os.path.join(root, name)
+            real = os.path.realpath(path)
+            if not os.path.isdir(real):
+                if os.path.islink(path):
+                    broken.append(name)
+                continue
+            skill_md = None
+            for cand in (os.path.join(real, "SKILL.md"),):
+                if os.path.isfile(cand):
+                    skill_md = cand
                     break
-                dirs[:] = [d for d in dirs if not d.startswith(".") and d != "node_modules"]
-                if root.count(os.sep) - real.count(os.sep) >= 2:
-                    dirs[:] = []
-        if not skill_md:
-            continue
-        try:
-            text = open(skill_md, encoding="utf-8", errors="ignore").read()
-        except OSError:
-            continue
-        meta = parse_frontmatter(text)
-        fm_end = text.find("\n---", 3)
-        fm_text = text[:fm_end] if fm_end != -1 else text[:2000]
-        invocation_disabled = is_invocation_disabled(fm_text)
-        entries.append({
-            "name": meta.get("name", name),
-            "dir": name,
-            "path": real,
-            "source": guess_source(real),
-            "description": meta.get("description", ""),
-            "description_zh": meta.get("description_zh", ""),
-            "version": meta.get("version", ""),
-            "is_symlink": os.path.islink(path),
-            "invocation_disabled": invocation_disabled,
-        })
+            if not skill_md:
+                # 个别技能 SKILL.md 不在根（如套件结构），向下找一层
+                for root_, dirs, files in os.walk(real):
+                    if "SKILL.md" in files:
+                        skill_md = os.path.join(root_, "SKILL.md")
+                        break
+                    dirs[:] = [d for d in dirs if not d.startswith(".") and d != "node_modules"]
+                    if root_.count(os.sep) - real.count(os.sep) >= 2:
+                        dirs[:] = []
+            if not skill_md:
+                continue
+            try:
+                text = open(skill_md, encoding="utf-8", errors="ignore").read()
+            except OSError:
+                continue
+            meta = parse_frontmatter(text)
+            fm_end = text.find("\n---", 3)
+            fm_text = text[:fm_end] if fm_end != -1 else text[:2000]
+            invocation_disabled = is_invocation_disabled(fm_text)
+            entry = {
+                "name": meta.get("name", name),
+                "dir": name,
+                "path": real,
+                "root": root,
+                "source": guess_source(real),
+                "description": meta.get("description", ""),
+                "description_zh": meta.get("description_zh", ""),
+                "version": meta.get("version", ""),
+                "is_symlink": os.path.islink(path),
+                "invocation_disabled": invocation_disabled,
+            }
+            if entry["name"] in seen:
+                # 同名技能去重：先到的根优先（用户目录排在 roots 最前）
+                collisions.append((entry["name"], entry["source"], seen[entry["name"]]))
+                continue
+            seen[entry["name"]] = entry["source"]
+            entries.append(entry)
     index = {
         "built_at": __import__("time").strftime("%Y-%m-%d %H:%M"),
         "n_skills": len(entries),
         "n_broken": len(broken),
         "broken": broken,
+        "roots": roots,
         "skills": entries,
     }
     out = os.path.abspath(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "index.json"))
     with open(out, "w", encoding="utf-8") as f:
         json.dump(index, f, ensure_ascii=False, indent=1)
     print(f"索引已建：{out}")
-    print(f"  已索引技能：{len(entries)} 个")
+    print(f"  已索引技能：{len(entries)} 个（扫描 {len(roots)} 个根）")
+    for r in roots:
+        print(f"    · {r}")
     if broken:
         print(f"  ⚠️ 失效链接：{len(broken)} 个 → {', '.join(broken)}")
+    if collisions:
+        shown = ", ".join(f"{n}({a}⊂{b})" for n, a, b in collisions[:6])
+        print(f"  ⚠️ 同名去重 {len(collisions)} 个（先到根优先）：{shown}")
     by_source = {}
     for e in entries:
         by_source.setdefault(e["source"], []).append(e["name"])
@@ -443,12 +499,16 @@ def cmd_query(query, top=10):
 
 
 def warn_if_stale(index):
-    """索引新鲜度自检：技能目录在索引建成后有变动就提醒。"""
+    """索引新鲜度自检：任一扫描根在索引建成后有变动就提醒。"""
     try:
         import time as _t
-        newest = max(
-            os.path.getmtime(os.path.join(SKILLS_DIR, n)) for n in os.listdir(SKILLS_DIR)
-        )
+        roots = index.get("roots") or [SKILLS_DIR]
+        newest = 0
+        for root in roots:
+            if not os.path.isdir(root):
+                continue
+            newest = max(newest, max(
+                os.path.getmtime(os.path.join(root, n)) for n in os.listdir(root)))
         built = _t.mktime(_t.strptime(index.get("built_at", ""), "%Y-%m-%d %H:%M"))
         if newest - built > 60:
             print(f"⚠️ 索引建于 {index.get('built_at')}，技能目录此后有变动——建议先跑一次 build。\n")

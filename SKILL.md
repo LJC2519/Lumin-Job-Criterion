@@ -57,7 +57,8 @@ L0 总任务：<一句话说清最终产出>
 > 下文命令中的 `<LJC>` = 本技能安装目录（默认 `~/.workbuddy/skills/lumin-job-criterion`，
 > 装在别处换成实际路径即可；被检索的技能目录可用环境变量 `LJC_SKILLS_DIR` 覆盖）。
 
-- **本地已装**（秒回、零网络）：
+- **本地已装**（秒回、零网络；索引覆盖用户技能 + WorkBuddy 内置技能 +
+  插件缓存技能）：
   ```bash
   python3 <LJC>/scripts/find.py query "<子任务领域词>" --top 8
   ```
