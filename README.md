@@ -117,19 +117,29 @@ GitHub 目标若是合集仓库（如 `anthropics/skills`），自动树形抽�
 推荐前顺手查「已装技能有没有过期」：
 
 ```bash
-python3 scripts/check_updates.py                    # 全量
-python3 scripts/check_updates.py code-review pdf    # 指定技能
+python3 scripts/check_updates.py                        # 全量
+python3 scripts/check_updates.py code-review pdf        # 指定技能
+python3 scripts/check_updates.py --record superpowers   # 更新后记录新 SHA
 ```
 
-双轨检测（**git 来源**精确比对本地 HEAD 与上游；**tarball 来源**靠
-`scripts/ljc_sources.json` 登记后查 GitHub 日期，启发式仅供参考）：
-输出分「已是最新 / 可更新 / 可能可更新 / 无法自动检测」四档，
+三轨检测：
+
+| 来源类型 | 判定方式 | 精度 |
+|---|---|---|
+| git 仓库（ecc-study） | fetch + 本地 HEAD vs 上游 | 精确 |
+| tarball（已记录 SHA） | `git ls-remote` 比 SHA——不走 API、不吃限额 | 精确 |
+| tarball（未记录 SHA） | GitHub API 日期启发式 | 参考（对纯删除提交会误报） |
+| pinned | 暂停自动判定（上游更旧/有意分叉时） | — |
+
+输出分「已是最新 / 可更新 / 可能可更新 / 已固定 / 无法检测」五档，
 可更新的给出具体命令，本地单文件技能折叠成一行跳过。
 
+**标准更新流程**：重新下载 tarball → 跑 `--record <来源名>` 把新 SHA 写进
+`scripts/ljc_sources.json`（语义=本地已同步到该 commit）→ 之后检测零误报。
+登记/固定来源：编辑 `scripts/ljc_sources.json`（形态说明见 `.example.json`）。
+
 更新纪律：**只检测不自动执行**——git 来源用户同意后 `git pull`，
-tarball 来源由 LJC 重新下载。登记 tarball 来源：复制
-`scripts/ljc_sources.example.json` 为 `scripts/ljc_sources.json`，
-把 `owner/repo` 补进去。
+tarball 来源由 LJC 重新下载。
 
 ## 任务盘点与停用建议
 

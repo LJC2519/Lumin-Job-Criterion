@@ -150,9 +150,11 @@ python3 <LJC>/scripts/security_check.py <候选技能路径或 owner/repo>
   停用了谁、为什么、怎么恢复，一句话说清。恢复=用户去技能设置里重新打开
 - **更新检测**（推荐里若有已装技能时必做）：对相关候选跑
   `python3 <LJC>/scripts/check_updates.py <技能名...>`，发现可更新就在
-  汇报里加一行：「X 可更新（git 落后 N 个 commit / 上游有新提交）——
+  汇报里加一行：「X 可更新（git 落后 N 个 commit / 上游 SHA 变了）——
   要更新吗？」。**更新需用户同意**：git 来源给 `git -C <目录> pull` 命令，
-  tarball 来源提出由 LJC 重新下载；不自动执行
+  tarball 来源提出由 LJC 重新下载；tarball 更新完成后跑
+  `check_updates.py --record <来源名>` 记录新 SHA，之后零误报；
+  不自动执行
 - 问用户要不要现在加载某个技能开工（用 `Skill` 工具）
 - **本技能只读、只推荐**：安装任何技能必须用户明确同意，走 `find-skills`
   或 SkillsMP 的安装通道
@@ -199,7 +201,8 @@ python3 <LJC>/scripts/find.py query "<用户的原话>" --top 5
   没接 MCP 时市场覆盖=GitHub + SkillHub，覆盖面小一截，要对用户说清
 - 安全检查是启发式，会误报（讨论安全的技能自带关键词）；机器不漏报，
   最终判断靠人
-- 更新检测双轨有边界：git 来源精确比对；tarball 来源靠 `ljc_sources.json`
-  登记的 GitHub 日期启发式（可能误报，输出已标注）；未登记来源如实报
-  「无法自动检测」，不猜
+- 更新检测三轨：git 精确 / tarball SHA 精确（ls-remote，不吃限额，
+  更新后跑 `--record` 记录）/ tarball 日期启发式（未记录 SHA 时回退，
+  对纯删除提交会误报，输出已标注）；pinned 来源暂停判定；未登记来源
+  如实报「无法自动检测」，不猜
 - 本技能不能替用户决定「要不要用技能」——那是不可外包层

@@ -33,8 +33,8 @@ UA = "lumin-job-criterion"
 
 def git(repo, *args, timeout=90):
     try:
-        r = subprocess.run(["git", "-C", repo] + list(args),
-                           capture_output=True, text=True, timeout=timeout)
+        cmd = ["git"] + (["-C", repo] if repo else []) + list(args)
+        r = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
         return r.returncode, r.stdout.strip(), r.stderr.strip()
     except Exception as e:
         return 99, "", str(e)
@@ -46,16 +46,53 @@ def load_index():
 
 
 def load_sources():
-    """用户登记的 tarball 来源 → owner/repo（git 来源自动识别，无需登记）。"""
+    """用户登记的来源配置。两种形态兼容：
+    字符串 "owner/repo"（旧式，无 SHA 记录→日期启发式回退）；
+    对象 {"repo":..., "sha":...}（精确 SHA 比对）；
+    对象 {"repo":..., "pinned": "原因"}（固定，暂停自动判定）。
+    git 来源（ecc-study 等）自动识别，无需登记。"""
     p = os.path.join(HERE, "ljc_sources.json")
     if os.path.isfile(p):
         try:
             d = json.load(open(p, encoding="utf-8"))
-            return {k: v for k, v in d.items()
-                    if not k.startswith("_") and isinstance(v, str)}
+            return normalize_sources(d)
         except Exception:
             return {}
     return {}
+
+
+def normalize_sources(raw):
+    """配置字典 → 统一内部形态（纯函数，可测试）。"""
+    out = {}
+    for k, v in raw.items():
+        if k.startswith("_"):
+            continue
+        if isinstance(v, str):
+            out[k] = {"repo": v}
+        elif isinstance(v, dict) and v.get("repo"):
+            out[k] = {"repo": v["repo"], "sha": v.get("sha"), "pinned": v.get("pinned")}
+    return out
+
+
+def compare_sha(stored, remote):
+    """SHA 比对，前缀容忍（记录可能是 7 位短值）。返回 current/outdated/unknown。"""
+    if not stored or not remote:
+        return "unknown"
+    s, r = str(stored).strip().lower(), str(remote).strip().lower()
+    if s == r or r.startswith(s) or s.startswith(r):
+        return "current"
+    return "outdated"
+
+
+def record_sha_into_config(raw, name, sha):
+    """把 SHA 写进配置（纯函数，可测试）：保留原结构，字符串形态升级为对象。"""
+    cur = raw.get(name)
+    if isinstance(cur, dict):
+        cur["sha"] = sha
+        cur.pop("pinned", None)
+    else:
+        raw[name] = {"repo": cur, "sha": sha} if isinstance(cur, str) else {"sha": sha}
+    return raw
 
 
 def api_get(url):
@@ -125,20 +162,77 @@ def check_git_source(src_path):
             "date": date, "repo": top, "dirty": bool(git(top, "status", "--porcelain")[1])}
 
 
-def check_remote_source(src_path, repo_slug):
-    """tarball 来源（已登记）：API 日期启发式。"""
-    ok, d = api_get(f"https://api.github.com/repos/{repo_slug}")
+def check_remote_source(src_path, entry):
+    """tarball 来源：优先 SHA 精确比对（ls-remote，不走 API）；
+    无记录 SHA 或 ls-remote 失败 → 退回 GitHub API 日期启发式。"""
+    if entry.get("pinned"):
+        return {"state": "pinned", "note": entry["pinned"]}
+    slug = entry.get("repo")
+    if not slug:
+        return {"state": "unknown-source"}
+    remote_sha = None
+    code, out, _ = git(None, "ls-remote", f"https://github.com/{slug}.git", "HEAD", timeout=60)
+    if code == 0 and out.strip():
+        remote_sha = out.split()[0]
+    stored = entry.get("sha")
+    if remote_sha and stored:
+        cmp = compare_sha(stored, remote_sha)
+        if cmp == "current":
+            return {"state": "current-remote", "sha": remote_sha[:12], "via": "sha"}
+        if cmp == "outdated":
+            return {"state": "outdated-remote", "stored": stored[:12],
+                    "remote": remote_sha[:12], "repo": slug}
+    ok, d = api_get(f"https://api.github.com/repos/{slug}")
     if not ok:
         return {"state": "check-failed", "reason": d}
     pushed = (d.get("pushed_at") or "")[:10]
     local = time.strftime("%Y-%m-%d", time.localtime(newest_mtime(src_path)))
     if pushed and pushed > local:
         return {"state": "maybe-outdated", "upstream_date": pushed, "local_date": local}
-    return {"state": "current-remote", "upstream_date": pushed, "local_date": local}
+    return {"state": "current-remote", "upstream_date": pushed, "local_date": local, "via": "date"}
+
+
+def cmd_record(names):
+    """记录来源的当前上游 SHA（语义=本地已同步到该 commit）。仅在更新完成后用。"""
+    cfg_path = os.path.join(HERE, "ljc_sources.json")
+    raw = {}
+    if os.path.isfile(cfg_path):
+        try:
+            raw = json.load(open(cfg_path, encoding="utf-8"))
+        except Exception:
+            raw = {}
+    norm = normalize_sources(raw)
+    for name in names:
+        entry = norm.get(name)
+        if not entry or not entry.get("repo"):
+            print(f" · {name}：未登记或格式不对，跳过")
+            continue
+        code, out, _ = git(None, "ls-remote", f"https://github.com/{entry['repo']}.git", "HEAD")
+        if code != 0 or not out.strip():
+            print(f" · {name}：ls-remote 失败，跳过")
+            continue
+        sha = out.split()[0]
+        raw = record_sha_into_config(raw, name, sha)
+        print(f" · {name}：已记录 {sha[:12]}（{entry['repo']}）")
+    try:
+        json.dump(raw, open(cfg_path, "w", encoding="utf-8"), ensure_ascii=False, indent=1)
+        print(f"\n已写入 {cfg_path}")
+    except OSError as e:
+        print(f"\n写入失败: {e}")
+    print("注意：--record 的语义是『本地已同步到该 commit』——确认更新完成后才跑。")
 
 
 def main():
-    names = [a for a in sys.argv[1:] if not a.startswith("-")]
+    args = sys.argv[1:]
+    if "--record" in args:
+        i = args.index("--record")
+        names = [a for a in args[i + 1:] if not a.startswith("-")]
+        if not names:
+            print("用法: check_updates.py --record <来源名> [<来源名>...]")
+            return
+        cmd_record(names)
+        return
+    names = [a for a in args if not a.startswith("-")]
     index = load_index()
     entries = [e for e in index["skills"] if not names or e["name"] in names]
     if not entries:
@@ -155,9 +249,9 @@ def main():
         src_path = os.path.commonpath([e["path"] for e in es])
         r = check_git_source(src_path)
         if r["state"] == "not-git":
-            slug = cfg.get(src)
-            if slug:
-                r = check_remote_source(src_path, slug)
+            entry = cfg.get(src)
+            if entry:
+                r = check_remote_source(src_path, entry)
             else:
                 r = {"state": "unknown-source"}
         results.append((src, len(es), r))
@@ -184,9 +278,14 @@ def main():
         print()
 
     show(lambda r: r["state"] == "current", "已是最新（git 上游对齐）")
-    show(lambda r: r["state"] == "current-remote", "已是最新（API 日期比对）")
-    show(lambda r: r["state"] == "outdated", "可更新（git 精确比对）",
-         "更新=git pull，需用户同意；有本地改动会标 dirty")
+    show(lambda r: r["state"] == "current-remote" and r.get("via") == "sha",
+         "已是最新（SHA 精确）")
+    show(lambda r: r["state"] == "current-remote" and r.get("via") != "sha",
+         "已是最新（日期启发式，无 SHA 记录——更新后可 --record 转精确）")
+    show(lambda r: r["state"] in ("outdated", "outdated-remote"), "可更新",
+         "更新需用户同意；git 来源给 pull 命令，tarball 来源重新下载后跑 --record 记录新 SHA")
+    show(lambda r: r["state"] == "pinned", "已固定（暂停自动判定）",
+         "上游与本地有意分叉，人工审查后再解除")
     show(lambda r: r["state"] == "maybe-outdated", "可能可更新（API 日期启发式，仅供参考）")
     show(lambda r: r["state"] in ("fetch-failed", "check-failed"), "检测失败（网络/限额）")
     show(lambda r: r["state"] in ("no-upstream", "unknown-source"), "无法自动检测",
@@ -201,9 +300,18 @@ def main():
             print(f" · {s}：落后 {r['behind']} 个 commit（上游最后更新 {r['date']}）"
                   + ("，本地有未提交改动，pull 前先处理" if r.get("dirty") else "")
                   + f"\n   更新命令：git -C {r['repo']} pull")
+        elif r["state"] == "outdated-remote":
+            print(f" · {s}：已记录 {r['stored']} → 上游 {r['remote']}（{r['repo']}）"
+                  f"\n   更新=重新下载 tarball，完成后跑 check_updates.py --record {s} 记录新 SHA")
+        elif r["state"] == "pinned":
+            print(f" · {s}：{r['note']}")
         elif r["state"] == "maybe-outdated":
             print(f" · {s}：上游最后推送 {r['upstream_date']}，本地副本 {r['local_date']}"
-                  f"\n   登记仓库：{cfg.get(s)}——更新=重新下载 tarball，可让 LJC 协助")
+                  f"（日期启发式，无 SHA 记录；更新后可 --record 转精确判定）")
+        elif r["state"] == "current-remote":
+            via = "SHA 精确" if r.get("via") == "sha" else "日期启发式"
+            extra = f"（{r['sha']}）" if r.get("sha") else f"（上游 {r.get('upstream_date')}）"
+            print(f" · {s}：{via}{extra}")
         elif r["state"] == "check-failed":
             print(f" · {s}：{r['reason']}")
         elif r["state"] == "fetch-failed":

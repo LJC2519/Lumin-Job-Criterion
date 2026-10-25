@@ -180,5 +180,35 @@ class TestUpdateChecker(unittest.TestCase):
             self.assertEqual(r["state"], "no-upstream")
 
 
+class TestShaComparison(unittest.TestCase):
+    def test_compare_sha(self):
+        import check_updates
+        self.assertEqual(check_updates.compare_sha("abc123", "abc123"), "current")
+        self.assertEqual(check_updates.compare_sha("2ce8aa1", "2ce8aa15d05b"), "current")
+        self.assertEqual(check_updates.compare_sha("2ce8aa15d05b", "2ce8aa1"), "current")
+        self.assertEqual(check_updates.compare_sha("aaa", "bbb"), "outdated")
+        self.assertEqual(check_updates.compare_sha("", "bbb"), "unknown")
+        self.assertEqual(check_updates.compare_sha(None, None), "unknown")
+
+    def test_normalize_sources(self):
+        import check_updates
+        raw = {"_说明": "x", "a": "o/r", "b": {"repo": "o/r2", "sha": "s"},
+               "c": {"repo": "o/r3", "pinned": "原因"}}
+        norm = check_updates.normalize_sources(raw)
+        self.assertEqual(set(norm), {"a", "b", "c"})
+        self.assertEqual(norm["a"], {"repo": "o/r"})
+        self.assertEqual(norm["b"]["sha"], "s")
+        self.assertEqual(norm["c"]["pinned"], "原因")
+
+    def test_record_sha_into_config(self):
+        import check_updates
+        raw = {"a": "o/r", "b": {"repo": "o/r2", "pinned": "旧原因"}}
+        out = check_updates.record_sha_into_config(raw, "a", "sha1")
+        self.assertEqual(out["a"], {"repo": "o/r", "sha": "sha1"})
+        out2 = check_updates.record_sha_into_config(raw, "b", "sha2")
+        self.assertEqual(out2["b"]["sha"], "sha2")
+        self.assertNotIn("pinned", out2["b"])
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

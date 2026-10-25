@@ -1,10 +1,5 @@
 {
-  "_说明": "登记 tarball 下载来源的 GitHub 仓库（owner/repo）——登记后更新检测才能查上游。git 仓库（如 ecc-study）自动识别，无需登记。未知来源会上报「无法自动检测」，把 owner/repo 补到这里即可。",
-  "superpowers": "obra/superpowers",
-  "anthropics-skills": "anthropics/skills",
-  "graphify-skill": "Graphify-Labs/graphify",
-  "rea": "morluto/rea",
-  "horizon": "Thysrael/Horizon",
-  "scrapling": "D4Vinci/Scrapling",
-  "agent-reach": "Panniantong/Agent-Reach"
+  "_说明": "复制本文件为同目录 ljc_sources.json 后生效（该文件已被 git 忽略，是你自己的本地配置）。登记 tarball 下载来源的 GitHub 仓库，更新检测才能查上游；git 仓库（如 ecc-study）自动识别，无需登记。三种形态：① 字符串 'owner/repo'（无 SHA 记录，日期启发式回退）② 对象 {'repo': 'owner/repo', 'sha': '...'}（SHA 精确比对，走 git ls-remote、不吃 API 限额；每次更新完成后运行 python3 scripts/check_updates.py --record <来源名> 记录新 SHA）③ 对象 {'repo': 'owner/repo', 'pinned': '原因'}（与上游有意分叉，暂停自动判定，如上游版本更旧时）。",
+  "superpowers": {"repo": "obra/superpowers", "sha": "更新后由 --record 记录"},
+  "anthropics-skills": "anthropics/skills"
 }
