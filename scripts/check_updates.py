@@ -113,15 +113,20 @@ def api_get(url):
 
 
 def source_of(path):
-    """技能真实路径 → 来源目录名；客户端托管（内置/插件缓存）返回 None。"""
+    """技能真实路径 → 来源目录名；客户端托管（内置/插件缓存）返回 None。
+    light/supervisor/ecc 三个仓库的技能直接放仓库根或一级子目录，
+    必须显式命名（取『标记后第一段』会把 light-citation、skills 这类
+    技能名/内层目录名误当来源名）。"""
     if "/workbuddy-builtin/skills/" in path or "/plugins/cache/" in path:
         return None  # 随客户端更新，不做检测
-    for marker in ("/skill-sources/", "/ecc-study/", "/light-skills/",
-                   "/supervisor-skills/"):
-        if marker in path:
-            if marker == "/ecc-study/":
-                return "ecc-study"
-            return path.split(marker, 1)[1].split("/", 1)[0] or marker.strip("/")
+    if "/ecc-study/" in path:
+        return "ecc-study"
+    if "/light-skills/" in path:
+        return "light-skills"
+    if "/supervisor-skills/" in path:
+        return "supervisor-skills"
+    if "/skill-sources/" in path:
+        return path.split("/skill-sources/", 1)[1].split("/", 1)[0]
     if path.startswith(os.path.expanduser("~/.workbuddy/skills")):
         return "local:" + os.path.basename(path.rstrip("/"))
     return None

@@ -165,6 +165,16 @@ class TestUpdateChecker(unittest.TestCase):
             check_updates.source_of(
                 os.path.expanduser("~/.workbuddy/skills/foo")).startswith("local:"))
 
+    def test_source_of_named_repos(self):
+        import check_updates
+        self.assertEqual(
+            check_updates.source_of("/Users/x/ecc-study/skills/code-review"), "ecc-study")
+        self.assertEqual(
+            check_updates.source_of("/Users/x/light-skills/light-citation"), "light-skills")
+        self.assertEqual(
+            check_updates.source_of("/Users/x/supervisor-skills/skills/deep-research"),
+            "supervisor-skills")
+
     def test_check_git_source_local_only(self):
         """无 remote 的本地 git 仓库 → no-upstream（不是 fetch-failed）。"""
         import subprocess
