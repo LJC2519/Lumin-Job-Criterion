@@ -1,0 +1,10 @@
+{
+  "_说明": "登记 tarball 下载来源的 GitHub 仓库（owner/repo）——登记后更新检测才能查上游。git 仓库（如 ecc-study）自动识别，无需登记。未知来源会上报「无法自动检测」，把 owner/repo 补到这里即可。",
+  "superpowers": "obra/superpowers",
+  "anthropics-skills": "anthropics/skills",
+  "graphify-skill": "Graphify-Labs/graphify",
+  "rea": "morluto/rea",
+  "horizon": "Thysrael/Horizon",
+  "scrapling": "D4Vinci/Scrapling",
+  "agent-reach": "Panniantong/Agent-Reach"
+}

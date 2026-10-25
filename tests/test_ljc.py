@@ -153,5 +153,29 @@ class TestSecurityScan(unittest.TestCase):
         self.assertFalse(any("网络调用" in f[1] for f in findings))
 
 
+class TestUpdateChecker(unittest.TestCase):
+    def test_source_of(self):
+        self.assertEqual(
+            find.source_of("/Users/x/skill-sources/superpowers/skills/tdd"), "superpowers")
+        self.assertEqual(
+            find.source_of("/Users/x/ecc-study/skills/code-review"), "ecc-study")
+        self.assertTrue(
+            find.source_of("/Users/x/.workbuddy/skills/foo").startswith("local:"))
+
+    def test_check_git_source_local_only(self):
+        """无 remote 的本地 git 仓库 → no-upstream（不是 fetch-failed）。"""
+        import subprocess
+        import tempfile
+        import check_updates
+        with tempfile.TemporaryDirectory() as d:
+            subprocess.run(["git", "init", "-q", d], capture_output=True)
+            env = dict(os.environ, GIT_AUTHOR_NAME="t", GIT_AUTHOR_EMAIL="t@t",
+                       GIT_COMMITTER_NAME="t", GIT_COMMITTER_EMAIL="t@t")
+            subprocess.run(["git", "-C", d, "commit", "--allow-empty", "-q", "-m", "init"],
+                           capture_output=True, env=env)
+            r = check_updates.check_git_source(d)
+            self.assertEqual(r["state"], "no-upstream")
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

@@ -79,6 +79,10 @@ python3 scripts/github_search.py "diagram" --catalog --refresh   # 强制刷新�
 python3 scripts/security_check.py ~/.workbuddy/skills/some-skill
 python3 scripts/security_check.py kevanwee/legal-extraction-skill
 
+# 更新检测：已装技能哪些有上游新版本（全量或指定技能）
+python3 scripts/check_updates.py
+python3 scripts/check_updates.py code-review pdf
+
 # 重建索引 / 列出全部已索引技能
 python3 scripts/find.py build
 python3 scripts/find.py list
@@ -107,6 +111,25 @@ python3 scripts/find.py list
 启发式检查，会误报（讨论安全话题的技能自带关键词）；机器负责不漏报，最终判断靠人。
 本地已装候选可另跑 `jason-security-audit` 技能的 `audit.py` 深审（若装着）。
 GitHub 目标若是合集仓库（如 `anthropics/skills`），自动树形抽检其中 SKILL.md 与代码文件（封顶 15 + 5 个）。
+
+## 更新检测
+
+推荐前顺手查「已装技能有没有过期」：
+
+```bash
+python3 scripts/check_updates.py                    # 全量
+python3 scripts/check_updates.py code-review pdf    # 指定技能
+```
+
+双轨检测（**git 来源**精确比对本地 HEAD 与上游；**tarball 来源**靠
+`scripts/ljc_sources.json` 登记后查 GitHub 日期，启发式仅供参考）：
+输出分「已是最新 / 可更新 / 可能可更新 / 无法自动检测」四档，
+可更新的给出具体命令，本地单文件技能折叠成一行跳过。
+
+更新纪律：**只检测不自动执行**——git 来源用户同意后 `git pull`，
+tarball 来源由 LJC 重新下载。登记 tarball 来源：复制
+`scripts/ljc_sources.example.json` 为 `scripts/ljc_sources.json`，
+把 `owner/repo` 补进去。
 
 ## 任务盘点与停用建议
 

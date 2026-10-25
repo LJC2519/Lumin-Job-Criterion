@@ -1,6 +1,7 @@
 index.json
 .cache/
 ljc_terms.json
+ljc_sources.json
 __pycache__/
 *.pyc
 .DS_Store
