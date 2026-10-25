@@ -155,12 +155,15 @@ class TestSecurityScan(unittest.TestCase):
 
 class TestUpdateChecker(unittest.TestCase):
     def test_source_of(self):
+        import check_updates
         self.assertEqual(
-            find.source_of("/Users/x/skill-sources/superpowers/skills/tdd"), "superpowers")
+            check_updates.source_of("/Users/x/skill-sources/superpowers/skills/tdd"),
+            "superpowers")
         self.assertEqual(
-            find.source_of("/Users/x/ecc-study/skills/code-review"), "ecc-study")
+            check_updates.source_of("/Users/x/ecc-study/skills/code-review"), "ecc-study")
         self.assertTrue(
-            find.source_of("/Users/x/.workbuddy/skills/foo").startswith("local:"))
+            check_updates.source_of(
+                os.path.expanduser("~/.workbuddy/skills/foo")).startswith("local:"))
 
     def test_check_git_source_local_only(self):
         """无 remote 的本地 git 仓库 → no-upstream（不是 fetch-failed）。"""
