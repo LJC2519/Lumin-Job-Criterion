@@ -231,5 +231,32 @@ class TestMultiRoot(unittest.TestCase):
             "plugin")
 
 
+class TestSearchBoost(unittest.TestCase):
+    def test_fuzzy_typo_in_score_entry(self):
+        import find
+        e = {"name": "python-testing", "description": "pytest strategies",
+             "description_zh": "", "source": "x"}
+        s, hits = find.score_entry(e, {"pytohn"})  # 拼写错的词
+        self.assertGreater(s, 0)
+        self.assertTrue(any(h.startswith("fuzzy") for h in hits))
+
+    def test_semantic_scores_ranks_related_first(self):
+        import find
+        entries = [
+            {"name": "a", "description": "convert word documents to pdf files",
+             "description_zh": ""},
+            {"name": "b", "description": "cook italian pasta recipes slowly",
+             "description_zh": ""},
+        ]
+        scores = find.semantic_scores(entries, {"convert", "word", "documents"})
+        self.assertGreater(scores[0], scores[1])
+
+    def test_pick_latest_version(self):
+        import find
+        self.assertEqual(find.pick_latest_version(["1.1.5", "1.1.7"]), "1.1.7")
+        self.assertEqual(find.pick_latest_version(["5.8.2-wb.411", "5.8.3-wb.413"]),
+                         "5.8.3-wb.413")
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

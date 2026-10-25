@@ -11,6 +11,22 @@
 ![Python 3.8+](https://img.shields.io/badge/python-3.8%2B-blue.svg)
 ![纯标准库](https://img.shields.io/badge/deps-zero-brightgreen.svg)
 
+## English
+
+**LJC (Lumin Job Criterion)** is a task-to-skill router: it decomposes your task into modules, sweeps your installed skills plus GitHub (repo radar + four skill catalogs), gates candidates through a security check, and draws a *task → skill coverage map* showing which skill covers what — and where the gaps are.
+
+Pure standard-library Python, zero dependencies. Skill-mode trigger: say “请ljc为我指点迷津” or “用 ljc 技能：\<task\>” (the registered skill name is `ljc`). All scripts also work standalone:
+
+```bash
+python3 scripts/find.py query "convert word documents" --top 8   # search installed skills
+python3 scripts/find.py suggest "your task description"          # relevant vs not-needed audit
+python3 scripts/github_search.py "skill router"                  # GitHub repo radar
+python3 scripts/github_search.py "diagram" --catalog             # four skill catalogs
+python3 scripts/security_check.py <path-or-owner/repo>           # BLOCK/WARN/PASS gate
+python3 scripts/check_updates.py                                 # update detection
+python3 scripts/find.py doctor                                   # self health check
+```
+
 ## 为什么做这个
 
 技能越装越多（100+ 是常态），接任务时却不知道有什么可用的：

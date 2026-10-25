@@ -12,15 +12,19 @@ WorkBuddy 内置技能 + 插件缓存最新版，可用环境变量 LJC_SKILLS_D
     python3 find.py query "画一个流程图"    # 检索（中英文均可）
     python3 find.py query "法律文书 信息抽取" --top 8
     python3 find.py suggest "把申报书数据合规章节加工成评委友好版"   # 任务盘点：相关 vs 用不到
+    python3 find.py doctor               # 一键体检：索引/断链/根目录/通道
     python3 find.py list                  # 列出全部已索引技能
 
 分工：本脚本管「已装的里有没有」（秒回、零网络）；
       已下载未注册的技能单独分区挑明，指出状态并照样介绍功能。
 """
+import difflib
 import json
+import math
 import os
 import re
 import sys
+from collections import Counter
 
 SKILLS_DIR = os.environ.get("LJC_SKILLS_DIR") or os.path.expanduser("~/.workbuddy/skills")
 INDEX_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "index.json")
@@ -218,6 +222,16 @@ def guess_source(real_path):
     return "local"
 
 
+def pick_latest_version(versions, plugin_dir=None):
+    """同插件多版本取最新：版本号数字段优先（5.8.3 > 5.8.2），
+    无数字段时 mtime 兜底。纯函数（plugin_dir 仅作平级比较用），可测试。"""
+    def key(v):
+        nums = [int(x) for x in re.findall(r"\d+", v)[:3]]
+        mt = os.path.getmtime(os.path.join(plugin_dir, v)) if plugin_dir else 0
+        return (nums, mt)
+    return max(versions, key=key)
+
+
 def default_roots():
     """扫描根列表（2026-10-25 扩为多根）：用户技能目录 + WorkBuddy 内置技能
     + 插件缓存（cache/<org>/<plugin>/<version>/skills，每插件只取最新版，
@@ -245,8 +259,7 @@ def default_roots():
                             if os.path.isdir(os.path.join(plugin_dir, v, "skills"))]
                 if not versions:
                     continue
-                latest = max(versions,
-                             key=lambda v: os.path.getmtime(os.path.join(plugin_dir, v)))
+                latest = pick_latest_version(versions, plugin_dir)
                 roots.append(os.path.join(plugin_dir, latest, "skills"))
     return roots
 
@@ -430,6 +443,15 @@ def score_entry(entry, terms):
             hit_this = True
         if hit_this:
             matched_terms.add(t)
+    # 模糊兜底：未命中的长词与技能名分段近似匹配（拼写容错，cutoff 0.8）
+    name_segs = [s for s in re.split(r"[-_. ]", name) if len(s) >= 4]
+    for t in sorted({str(x).lower() for x in terms
+                     if len(str(x)) >= 4 and str(x).lower() not in matched_terms}):
+        m = difflib.get_close_matches(t, name_segs, n=1, cutoff=0.8)
+        if m:
+            score += 10
+            hits.append(f"fuzzy~{t}≈{m[0]}")
+            matched_terms.add(t)
     # 多词覆盖加成：任务查询是多个词的组合，覆盖的不同检索词越多，
     # 越可能覆盖任务的更多侧面——不应被单个词的强命中（如 name）压过。
     if len(matched_terms) >= 2:
@@ -437,6 +459,37 @@ def score_entry(entry, terms):
         score += bonus
         hits.append(f"覆盖{len(matched_terms)}词+{bonus}")
     return score, hits
+
+
+def _entry_tokens(entry):
+    """技能的词袋：name + 双语 description，小写英文数字词。"""
+    text = " ".join([entry.get("name", ""), entry.get("description", ""),
+                     entry.get("description_zh", "")]).lower()
+    return re.findall(r"[a-z0-9]{2,}", text)
+
+
+def semantic_scores(entries, terms):
+    """纯标准库 TF-IDF 余弦相似度——关键词匹配之外的语义补充信号。
+    词袋级（非向量嵌入），但能捕捉「查询词不在描述里、近义词在」的情况。
+    返回与 entries 等长的 0~1 相似度列表。"""
+    if not entries or not terms:
+        return [0.0] * len(entries)
+    docs = [Counter(_entry_tokens(e)) for e in entries]
+    n = len(docs)
+    df = Counter()
+    for doc in docs:
+        for t in doc:
+            df[t] += 1
+    idf = {t: math.log(n / c) + 1.0 for t, c in df.items()}
+    q = Counter(t for t in terms)
+    qnorm = math.sqrt(sum((c * idf.get(t, 1.0)) ** 2 for t, c in q.items())) or 1.0
+    scores = []
+    for doc in docs:
+        dot = sum(qc * idf.get(t, 1.0) * dc * idf.get(t, 1.0)
+                  for t, qc in q.items() if (dc := doc.get(t)))
+        dnorm = math.sqrt(sum((dc * idf.get(t, 1.0)) ** 2 for t, dc in doc.items())) or 1.0
+        scores.append(dot / (qnorm * dnorm))
+    return scores
 
 
 def cmd_query(query, top=10):
@@ -448,10 +501,19 @@ def cmd_query(query, top=10):
         return
     scored = []
     hidden = []
-    for e in index["skills"]:
+    sem = semantic_scores(index["skills"], terms)
+    for i, e in enumerate(index["skills"]):
         s, hits = score_entry(e, terms)
+        sem_pts = int(round(min(sem[i] * 30, 30)))
         if s <= 0:
-            continue
+            if sem_pts >= 8:  # 关键词零命中但语义信号强 → 低分候选（扩召回）
+                s, hits = sem_pts, [f"tfidf≈{sem[i]:.2f}"]
+            else:
+                continue
+        else:
+            s += sem_pts
+            if sem_pts >= 5:
+                hits.append(f"tfidf+{sem_pts}")
         if e.get("invocation_disabled"):
             hidden.append((s, hits, e))
             continue
@@ -525,10 +587,12 @@ def cmd_suggest(task, top=10):
         print("任务描述为空")
         return
     useful, unused = [], []
-    for e in index["skills"]:
+    sem = semantic_scores(index["skills"], terms)
+    for i, e in enumerate(index["skills"]):
         if e.get("invocation_disabled"):
             continue  # 未注册的本来就不可调用，不参与停用建议
         s, hits = score_entry(e, terms)
+        s += int(round(min(sem[i] * 30, 30)))
         if s > 0:
             useful.append((s, hits, e))
         else:
@@ -569,6 +633,55 @@ def cmd_list():
             print(f"  {e['name']:38s} {d}")
 
 
+def cmd_doctor():
+    """一键体检：索引新鲜度 / 失效链接 / 扫描根 / GitHub 连通 / 目录缓存。"""
+    import time as _t
+    import urllib.request
+    print("LJC doctor —— 自检")
+    problems = []
+    idx_file = os.path.abspath(os.path.join(
+        os.path.dirname(os.path.abspath(__file__)), "..", "index.json"))
+    if not os.path.isfile(idx_file):
+        print(" ✗ 索引不存在 → python3 find.py build")
+        print("\n结论：1 项待处理 → index-missing")
+        return
+    index = load_index()
+    try:
+        built = _t.mktime(_t.strptime(index.get("built_at", ""), "%Y-%m-%d %H:%M"))
+        age = (_t.time() - built) / 60
+        mark = "✓" if age < 120 else "⚠"
+        print(f" {mark} 索引：{index.get('n_skills')} 个技能，"
+              f"建于 {index.get('built_at')}（{age:.0f} 分钟前）")
+        if age >= 120:
+            problems.append("index-stale")
+    except Exception:
+        problems.append("index-unreadable")
+        print(" ⚠ 索引 built_at 无法解析")
+    if index.get("n_broken"):
+        print(f" ✗ 失效符号链接 {index['n_broken']} 个："
+              f"{', '.join(index.get('broken', []))}")
+        problems.append("broken-links")
+    for root in index.get("roots", []):
+        if not os.path.isdir(root):
+            print(f" ✗ 扫描根不存在：{root}")
+            problems.append("root-missing")
+    try:
+        urllib.request.urlopen(
+            urllib.request.Request("https://github.com", method="HEAD"), timeout=6)
+        print(" ✓ GitHub 可达（市场通道可用）")
+    except Exception as e:
+        print(f" ⚠ GitHub 暂不可达（{e}）——市场通道受影响，本地检索不受影响")
+    cache_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".cache")
+    if os.path.isdir(cache_dir):
+        n = len([f for f in os.listdir(cache_dir)
+                 if f.endswith(".md") or f.endswith(".json")])
+        print(f" ✓ 技能目录缓存：{n} 个文件（7 天 TTL，--refresh 强刷）")
+    else:
+        print(" · 技能目录缓存：空（首次 --catalog 会抓取）")
+    print("\n结论：" + (f"发现 {len(problems)} 项待处理 → {', '.join(problems)}"
+                       if problems else "全部正常"))
+
+
 def main():
     if len(sys.argv) < 2:
         print(__doc__)
@@ -600,6 +713,8 @@ def main():
         else:
             task = " ".join(sys.argv[2:])
         cmd_suggest(task, top)
+    elif cmd == "doctor":
+        cmd_doctor()
     elif cmd == "list":
         cmd_list()
     else:
