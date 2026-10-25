@@ -1,0 +1,6 @@
+index.json
+.cache/
+ljc_terms.json
+__pycache__/
+*.pyc
+.DS_Store
