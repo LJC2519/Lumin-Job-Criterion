@@ -168,6 +168,13 @@ ZH_TO_EN = {
     "结构化": ["structured", "structure", "schema", "extraction"],
     "队友": ["team", "collaboration", "handoff"],
     "分工": ["division", "team", "assignment"],
+    # ── 阅读与复核（2026-10-25 补：实测「复核 验证 检查清单」查询漏掉
+    # verification-loop / verification-before-completion 等验证组技能）──
+    "复核": ["verification", "verify", "recheck", "double-check", "review"],
+    "阅读": ["reading", "read", "comprehension", "understanding"],
+    "长文本": ["long document", "long text", "lengthy document"],
+    "检查清单": ["checklist", "check list", "checklist review"],
+    "遗漏": ["missing", "omission", "gap", "overlooked"],
 }
 
 
