@@ -54,6 +54,7 @@ LJC 把「找技能」从碰运气变成流水线：
 - **安全门**：每个候选推荐前过 BLOCK / WARN / PASS 三档检查——管道执行远程脚本、编码载荷、提示词注入、凭证泄漏一律 BLOCK
 - **任务盘点**：`suggest` 分出「任务相关」与「本次用不到」，停不停、停哪些你说了算
 - **未注册挑明**：下载了但被作者禁用模型调用的技能，指出「下载了，但没有注册」+ 照样介绍功能 + 给开放路径
+- **双层语义**：词袋（内置 TF-IDF / 模糊匹配 / 130+ 中英术语映射）+ **可选向量后端**（软依赖：环境里装了 `sentence-transformers` / `fastembed` / `openai` 或自备嵌入命令就自动启用，没装静默回退）
 - **纯标准库**：零依赖，clone 即用；`LJC_SKILLS_DIR` / `GITHUB_TOKEN` / `LJC_CACHE_DIR` 可配
 - **可发布可分发**：SKILL.md 标准格式，任何兼容客户端都能用；脚本也可脱离技能框架单独跑
 
@@ -108,6 +109,9 @@ python3 scripts/check_updates.py code-review pdf
 # 重建索引 / 列出全部已索引技能
 python3 scripts/find.py build
 python3 scripts/find.py list
+
+# 语义后端自检：探测到什么、缓存状态、没探测到怎么开
+python3 scripts/find.py semantic
 ```
 
 ## 四个检索通道
@@ -121,6 +125,32 @@ python3 scripts/find.py list
 | 语义市场（可选）          | LJC 流程内 curl SkillHub        | 前几路不满意时再用                                          |
 
 通道之间不短路：本地秒回但只覆盖已装；GitHub 覆盖开源公开；SkillsMP 面最广但质量参差。至少覆盖「本地 + GitHub + 其一市场」再下结论。
+
+## 语义检索：词袋 + 可选向量后端
+
+本地检索默认跑**纯标准库 TF-IDF**（外加模糊匹配与 130+ 条中英术语映射）。它是**词袋级**的：
+比字符重叠，不懂含义——「帮我找个能审合同的」与描述 `review agreement risk` 字符零重叠，词袋打 0 分。
+
+想补上这一层，有两种办法，本项目两种都留了口子：
+
+| 办法                 | 怎么开                                                                                                          | 代价                          |
+| ------------------ | ------------------------------------------------------------------------------------------------------------ | --------------------------- |
+| **宿主模型意译**（零依赖，默认靠它） | 检索前把任务意译成 3–5 组语义相同、措辞不同的查询（中英皆可），分别检索后合并去重——SKILL.md 已写进流程，立即生效                                             | 多跑几次检索，零安装                  |
+| **向量后端**（软依赖，自动探测）  | `pip install sentence-transformers`（或 `fastembed`）；也可 `export LJC_SEMANTIC_CMD='你的嵌入命令'`，或装 `openai` + 设 API KEY | 本机模型约 100–500MB；云端要联网、有隐私代价 |
+
+设计取舍：**`find.py` 永不 import 任何第三方库**——用了 `importlib.util.find_spec` 探测，
+探测到才加载；探测不到、或加载/调用失败，一律**静默回退词袋**，绝不报错、绝不影响主流程。
+所以纯净环境 clone 下来照样能跑，装了库的人自动多一层召回。
+
+融合规则与三道防噪声闸门（都在 `find.py` 里，可调）：
+
+- 两个引擎衡量同一件事，**取较强者**而不是相加；两者都给出有效信号才额外 +5（一致性）
+- **绝对下限** `VEC_FLOOR=0.35`：余弦对不相干短文本也常给出 0.3–0.5，低于此不计分
+- **相对门槛** `VEC_REL_RATIO=0.8`：零关键词要被捞回，需 ≥ 本轮最高分的 80%
+- **名额上限** `VEC_RESCUE_MAX=10`：语义召回是补位，不是把半库搬出来
+
+向量结果按索引指纹缓存到 `scripts/.cache/embeddings.json`（技能集合或索引一变就作废重算）。
+自检：`python3 scripts/find.py semantic`；关闭：`export LJC_SEMANTIC=off`。
 
 ## 安全检查（推荐前的门）
 
@@ -213,6 +243,9 @@ lumin-job-criterion/
 | `LJC_SKILLS_DIRS`          | 完全自定义扫描根列表（冒号分隔，覆盖默认）         | 无                     |
 | `GITHUB_TOKEN`             | GitHub API 认证（提高限额）           | 无（未认证）                |
 | `LJC_CACHE_DIR`            | 技能目录缓存位置                      | 脚本旁 `.cache/`         |
+| `LJC_SEMANTIC`             | 语义后端开关：`auto`/`off`/`local`/`cloud`/`external` | `auto`（探测不到即回退词袋） |
+| `LJC_SEMANTIC_MODEL`       | 覆盖嵌入模型名                       | 各后端默认（多语言小模型）    |
+| `LJC_SEMANTIC_CMD`         | 自备嵌入命令（stdin 收 JSON 字符串数组，stdout 吐 JSON 二维数组） | 无         |
 | `scripts/ljc_terms.json`   | 用户自定义术语映射（复制示例文件创建，git 忽略）    | 无                     |
 | `scripts/ljc_sources.json` | tarball 来源登记（复制示例文件创建，git 忽略） | 无                     |
 
@@ -223,11 +256,16 @@ lumin-job-criterion/
 ## 测试
 
 ```bash
-python3 tests/test_ljc.py   # 16 项，零网络零文件系统，秒级
+python3 tests/test_ljc.py   # 43 项，零网络、秒级（缓存用例用临时目录）
 ```
 
-覆盖术语扩展、多词排序加成、停用标志检测、目录解析（markdown + 树形）、安全模式三档。  
+覆盖术语扩展与停用词、多词排序加成、停用标志检测、目录解析（markdown + 树形）、
+安全模式三档、更新检测、多根索引，以及**语义后端双分支**（探测到即用 / 探测不到或
+编码失败静默回退词袋、缓存复用与指纹失效、融合取强不取和、三道防噪声闸门）。  
 新功能先写 RED 测试再实现——本仓库的纪律。
+
+> 2026-10-26 修了一个测试自身的 bug：`unittest.main()` 曾被写在文件中间，
+> 之后追加的测试类根本没被执行（现在已移到文件末尾）。
 
 ## FAQ / 故障排查
 

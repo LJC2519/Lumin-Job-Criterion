@@ -6,8 +6,12 @@
       security_check.py（BLOCK/WARN 模式）。
 新功能先在此写 RED 测试，再实现——项目纪律。
 """
+import json
 import os
+import shutil
 import sys
+import tempfile
+import types
 import unittest
 
 SCRIPTS = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "scripts")
@@ -37,6 +41,22 @@ class TestExpandQuery(unittest.TestCase):
     def test_english_passthrough(self):
         terms = find.expand_query("knowledge graph")
         self.assertTrue(any("knowledge graph" == t for t in terms))
+
+
+    def test_stopwords_not_terms(self):
+        """冠词/介词不能当检索词：否则在每条英文描述里子串命中，一次灌上百个候选。"""
+        terms = find.expand_query("audit an agreement before signing")
+        self.assertIn("audit", terms)
+        self.assertIn("agreement", terms)
+        for sw in ("an", "before", "the"):
+            self.assertNotIn(sw, terms, f"停用词 {sw} 不该成为检索词")
+
+    def test_strip_flags(self):
+        """--json / --top 3 不该被当成查询词。"""
+        self.assertEqual(find.strip_flags("audit --json"), "audit")
+        self.assertEqual(find.strip_flags("audit --top 3"), "audit")
+        self.assertEqual(find.strip_flags("--top 3 audit"), "audit")
+        self.assertNotIn("--json", find.expand_query("audit contract --json"))
 
 
 class TestScoring(unittest.TestCase):
@@ -277,9 +297,6 @@ class TestSearchBoost(unittest.TestCase):
         self.assertTrue(any(f[0] == "WARN" and "eval" in f[1] for f in findings))
 
 
-if __name__ == "__main__":
-    unittest.main(verbosity=2)
-
 class TestHitHistory(unittest.TestCase):
     def test_compute_stats(self):
         import find
@@ -296,3 +313,175 @@ class TestHitHistory(unittest.TestCase):
         self.assertEqual(st["records"], 2)
         self.assertEqual(st["counts"]["x"], 2)
         self.assertEqual(st["never_hit"], ["z"])
+
+
+def _fake_index():
+    return {"built_at": "2026-10-26 00:00:00", "skills": [
+        {"name": "contract-review", "description": "Review agreement risk clauses",
+         "description_zh": "合同审查", "source": "x"},
+        {"name": "pdf", "description": "convert pdf to word documents",
+         "description_zh": "", "source": "x"},
+    ]}
+
+
+def _stub_backend():
+    """关键词式假后端（不联网、不加载模型）：命中合同语义词→[1,0]，否则→[0,1]。
+    不用整串查表，是为了不被 _entry_doc 的拼接细节绊倒。"""
+
+    def encode(texts):
+        keys = ("合同", "contract", "review", "审")
+        return [[1.0, 0.0] if any(k in t.lower() for k in keys) else [0.0, 1.0]
+                for t in texts]
+    return {"kind": "local", "name": "stub", "model": "stub",
+            "key": "stub:stub", "encode": encode}
+
+
+class TestSemanticBackend(unittest.TestCase):
+    """软依赖语义后端：探测得到就用，探测不到必须静默回退（零依赖不被破坏）。"""
+
+    def test_env_off_disables(self):
+        b, reason = find.detect_semantic_backend(env={"LJC_SEMANTIC": "off"})
+        self.assertIsNone(b)
+        self.assertIn("off", reason)
+
+    def test_no_backend_detected_falls_back(self):
+        b, reason = find.detect_semantic_backend(
+            env={"LJC_SEMANTIC": "auto"}, spec_fn=lambda n: None)
+        self.assertIsNone(b)
+        self.assertIn("未检测到", reason)
+
+    def test_local_backend_detected(self):
+        """模拟环境里装了 sentence_transformers：应探测到并可用。"""
+        fake_mod = types.ModuleType("sentence_transformers")
+
+        class _M:
+            def __init__(self, name):
+                self.name = name
+
+            def encode(self, texts, normalize_embeddings=False):
+                return [[1.0, 0.0] if "contract" in t.lower() else [0.0, 1.0]
+                        for t in texts]
+        fake_mod.SentenceTransformer = _M
+        sys.modules["sentence_transformers"] = fake_mod
+        try:
+            b, reason = find.detect_semantic_backend(
+                env={"LJC_SEMANTIC": "local"},
+                spec_fn=lambda n: object() if n == "sentence_transformers" else None)
+            self.assertIsNotNone(b, reason)
+            self.assertEqual(b["kind"], "local")
+            self.assertEqual(b["name"], "sentence-transformers")
+            vecs = b["encode"](["contract review", "pdf convert"])
+            self.assertEqual(len(vecs), 2)
+        finally:
+            sys.modules.pop("sentence_transformers", None)
+
+    def test_external_cmd_backend(self):
+        """外部命令后端：脚本零依赖接入任意嵌入模型。"""
+        b, _ = find.detect_semantic_backend(
+            env={"LJC_SEMANTIC": "external", "LJC_SEMANTIC_CMD": "echo"})
+        self.assertIsNotNone(b)
+        self.assertEqual(b["kind"], "external")
+
+    def test_vector_scores_rescues_zero_overlap(self):
+        """关键场景：查询与描述字符零重叠，词袋打 0 分，向量应能捞回来。"""
+        index = _fake_index()
+        backend = _stub_backend()
+        tmp = tempfile.mkdtemp()
+        try:
+            scores = find.vector_scores(
+                index, "帮我找个能审合同的 review contract", backend,
+                cache_path=os.path.join(tmp, "emb.json"))
+        finally:
+            shutil.rmtree(tmp, ignore_errors=True)
+        self.assertEqual(len(scores), 2)
+        self.assertGreater(scores[0], scores[1], "语义上合同审查应排 pdf 前面")
+        bag = find.semantic_scores(index["skills"], {"帮我找个能审合同的"})
+        self.assertLess(max(bag), 0.01, "此例词袋应几乎无信号，才证明向量是补位不是重复")
+
+    def test_encode_failure_falls_back_silently(self):
+        """后端报异常 → 返回空列表（调用方回退词袋），绝不冒泡炸掉检索。"""
+
+        def boom(texts):
+            raise RuntimeError("model not downloaded")
+        backend = {"kind": "local", "name": "stub", "model": "m", "key": "k",
+                   "encode": boom}
+        tmp = tempfile.mkdtemp()
+        try:
+            scores = find.vector_scores(_fake_index(), "anything", backend,
+                                        cache_path=os.path.join(tmp, "emb.json"))
+        finally:
+            shutil.rmtree(tmp, ignore_errors=True)
+        self.assertEqual(scores, [])
+
+    def test_embed_cache_reused_and_invalidated(self):
+        """同指纹复用缓存；技能集合变了则作废重算（防止张冠李戴）。"""
+        index = _fake_index()
+        calls = {"n": 0}
+
+        def encode(texts):
+            calls["n"] += 1
+            return [[1.0, 0.0] for _ in texts]
+        backend = {"kind": "local", "name": "stub", "model": "m", "key": "k",
+                   "encode": encode}
+        tmp = tempfile.mkdtemp()
+        try:
+            path = os.path.join(tmp, "emb.json")
+            t1, s1 = find.load_vectors(index, backend, cache_path=path)
+            t2, s2 = find.load_vectors(index, backend, cache_path=path)
+            self.assertEqual(s1, "本次计算")
+            self.assertEqual(s2, "缓存")
+            self.assertEqual(calls["n"], 1, "第二次应命中缓存，不再编码")
+            mutated = _fake_index()
+            mutated["skills"].append({"name": "new-skill", "description": "d"})
+            _, s3 = find.load_vectors(mutated, backend, cache_path=path)
+            self.assertEqual(s3, "本次计算", "指纹变了必须重算")
+            with open(path, encoding="utf-8") as f:
+                self.assertEqual(len(json.load(f)["names"]), 3)
+        finally:
+            shutil.rmtree(tmp, ignore_errors=True)
+
+    def test_fusion_takes_stronger_not_sum(self):
+        """两个引擎衡量同一件事：取较强者，不重复计分；同时有效才 +5。"""
+        pts, label = find.fusion_points(0.2, 0.9)    # 词袋 6 分、向量 32 分 → 32+5
+        self.assertEqual(pts, 37)
+        self.assertIn("一致", label)
+        pts_weak, label_weak = find.fusion_points(0.0, 0.9)  # 词袋无信号 → 只算向量
+        self.assertEqual(pts_weak, 32)
+        self.assertIn("vec", label_weak)
+        pts2, label2 = find.fusion_points(0.8, 0.6)  # 24 分 / 21 分 → 一致 +5
+        self.assertEqual(pts2, 29)
+        self.assertIn("一致", label2)
+        pts3, _ = find.fusion_points(0.0, None)      # 无向量后端
+        self.assertEqual(pts3, 0)
+
+    def test_vec_floor_rejects_baseline_noise(self):
+        """余弦基线：不相干文本也常有 0.3~0.5 的相似度，低于门槛一律不计分。"""
+        self.assertEqual(find.fusion_points(0.0, 0.30)[0], 0)
+        self.assertEqual(find.fusion_points(0.0, find.VEC_FLOOR - 0.01)[0], 0)
+        self.assertGreater(find.fusion_points(0.0, find.VEC_FLOOR + 0.01)[0], 0)
+
+    def test_rescue_needs_absolute_and_relative(self):
+        """捞回要过双关：绝对下限 + 不低于本轮最高分的 80%。"""
+        self.assertTrue(find.vec_rescue_ok([0.9, 0.9], 0, 0.9))
+        self.assertFalse(find.vec_rescue_ok([0.40, 0.9], 0, 0.9))   # 绝对不够
+        self.assertFalse(find.vec_rescue_ok([0.55, 0.95], 0, 0.95))  # 相对不够
+        self.assertFalse(find.vec_rescue_ok([], 0, 0.0))             # 无后端
+
+    def test_rescue_capped_and_monotonic(self):
+        """捞回有名额上限：15 个都过关也只取前 10（按相似度降序）。"""
+        vec = [0.9 - 0.01 * i for i in range(15)]
+        picked = find.rescue_indices(vec, 0.9)
+        self.assertEqual(len(picked), find.VEC_RESCUE_MAX)
+        self.assertIn(0, picked)
+        self.assertNotIn(14, picked)
+        self.assertEqual(find.rescue_indices([], 0.0), set())
+
+    def test_fingerprint_changes_with_skills(self):
+        a = find.index_fingerprint(_fake_index())
+        b = _fake_index()
+        b["built_at"] = "2026-10-27 00:00:00"
+        self.assertNotEqual(a, find.index_fingerprint(b))
+
+
+if __name__ == "__main__":
+    unittest.main(verbosity=2)

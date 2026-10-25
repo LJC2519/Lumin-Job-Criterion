@@ -118,6 +118,11 @@ right-sizing 模式后强化；不满足就继续拆或合并）：
   检索前把用户任务意译成 3–5 组语义相同、措辞不同的查询（中英皆可，
   例：「审合同」→ "audit contract" / "review contract terms" /
   "签约前风险把关"），分别检索后合并去重。术语映射查不到的词更要靠这步。
+- **可选语义后端（软依赖，脚本自动探测）**：若环境里已装嵌入能力
+  （`sentence-transformers` / `fastembed` / `openai`+KEY / 或 `LJC_SEMANTIC_CMD`
+  外部命令），`find.py` 会自动启用向量召回，与词袋信号融合；**没装就静默回退
+  词袋**，行为与不开完全一致、零报错、零依赖。查看状态跑
+  `python3 scripts/find.py semantic`；不想用设 `LJC_SEMANTIC=off`。
 - 各路结果合并去重。「已下载但未注册」的命中由脚本**单独分区挑明**（规则见下）
 
 **已下载但未注册怎么办**：有的技能下载安装了，但作者在其 SKILL.md 里写了

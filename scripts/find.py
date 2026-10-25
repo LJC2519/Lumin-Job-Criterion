@@ -13,22 +13,47 @@ WorkBuddy 内置技能 + 插件缓存最新版，可用环境变量 LJC_SKILLS_D
     python3 find.py query "法律文书 信息抽取" --top 8
     python3 find.py suggest "把申报书数据合规章节加工成评委友好版"   # 任务盘点：相关 vs 用不到
     python3 find.py doctor               # 一键体检：索引/断链/根目录/通道
+    python3 find.py semantic             # 语义后端自检（探测到就用，没探测到说明怎么开）
     python3 find.py list                  # 列出全部已索引技能
 
 分工：本脚本管「已装的里有没有」（秒回、零网络）；
       已下载未注册的技能单独分区挑明，指出状态并照样介绍功能。
 """
 import difflib
+import hashlib
+import importlib
+import importlib.util
 import json
 import math
 import os
 import re
+import subprocess
 import sys
 from collections import Counter
 
 SKILLS_DIR = os.environ.get("LJC_SKILLS_DIR") or os.path.expanduser("~/.workbuddy/skills")
 INDEX_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "index.json")
 HISTORY_PATH = os.path.abspath(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "hits_history.jsonl"))
+EMBED_CACHE_PATH = os.path.abspath(os.path.join(
+    os.path.dirname(os.path.abspath(__file__)), ".cache", "embeddings.json"))
+
+# ── 可选语义后端（软依赖：探测得到就用，探测不到就回退词袋）──
+# 背景：内置 semantic_scores() 是纯标准库 TF-IDF，属「词袋级」——比较字符重叠，
+# 不懂含义。查询「帮我找个能审合同的」与描述「review agreement risk」字符零重叠，
+# 词袋打 0 分。真语义需要把文字变成向量（嵌入），那需要第三方库或云端 API。
+# 本项目的取舍（用户 2026-10-26 定）：
+#   · find.py **永不 import 任何第三方库**——纯净环境 clone 下来就能跑；
+#   · 但如果你环境里**已经装了**嵌入能力，就自动用上（真语义召回）；
+#   · 没装 → 静默回退 TF-IDF 词袋，行为与今天完全一致，零报错、零依赖。
+# 环境变量（全部可选）：
+#   LJC_SEMANTIC=auto|off|local|cloud|external  默认 auto
+#   LJC_SEMANTIC_MODEL=...                       覆盖默认模型名
+#   LJC_SEMANTIC_CMD="..."                       外部嵌入命令：stdin 收 JSON 字符串数组，
+#                                                stdout 吐 JSON 二维数组（每行一个向量）
+# 支持的三类后端：
+#   local    sentence-transformers / fastembed（本机模型，离线可跑）
+#   cloud    openai SDK + OPENAI_API_KEY（联网、有隐私代价，按次计费）
+#   external 任意可执行命令（你自己接的模型/服务，脚本零依赖接入）
 
 # ── 已下载已安装、但未开放模型调用的技能 ──
 # 检测机制（可移植、自维护，不写死名单）：build 时读每个技能 SKILL.md 的
@@ -395,11 +420,47 @@ def load_extra_terms(path=None):
     return {}
 
 
+# ── 英文停用词 ──
+# 2026-10-26 实测：查「audit an agreement before signing」时，an / before 这类词
+# 进了检索词集合，又在每条英文描述里做子串匹配（desc~an 命中几乎所有技能），
+# 一次灌出 116 个候选。检索词必须是「有区分度的词」，冠词介词不是。
+STOPWORDS_EN = {
+    "a", "an", "the", "and", "or", "but", "if", "of", "to", "in", "on", "at",
+    "by", "for", "with", "from", "into", "about", "as", "is", "are", "was",
+    "be", "do", "does", "did", "it", "its", "this", "that", "these", "those",
+    "my", "me", "i", "we", "you", "he", "she", "they", "them", "his", "her",
+    "before", "after", "then", "than", "when", "while", "during", "over",
+    "under", "again", "very", "can", "could", "should", "would", "will",
+    "just", "also", "some", "any", "all", "not", "no", "up", "down", "out",
+    "there", "here", "what", "which", "who", "how", "why", "please", "want",
+    "need", "help", "find", "get", "make", "use", "using", "something",
+}
+
+
+def strip_flags(text):
+    """命令行 flag（--json/--top 及取值）不该被当成查询词。"""
+    words = text.split()
+    out = []
+    skip = 0
+    for w in words:
+        if skip:
+            skip -= 1
+            continue
+        if w.startswith("--"):
+            if w == "--top":  # --top 的取值是数字，一并跳过
+                skip = 1
+            continue
+        out.append(w)
+    return " ".join(out).strip()
+
+
 def expand_query(query, extra_terms=None):
     """把查询扩展成英文检索词集合（中文查映射表，英文词原样保留）。
     中英混排（如「pdf转word」）先在中英边界切开再分词。
     extra_terms：用户自定义映射（None=自动加载 ljc_terms.json，优先于内置）。"""
     q = query.lower().strip()
+    # 命令行 flag 不该进查询（--json/--top 等）
+    q = " ".join(w for w in q.split() if not w.startswith("--")).strip()
     terms = set()
     # 0) 中英边界切开：pdf转word → pdf 转 word
     q = re.sub(r"([a-z0-9])([\u4e00-\u9fff])", r"\1 \2", q)
@@ -409,7 +470,7 @@ def expand_query(query, extra_terms=None):
     if cleaned:
         terms.add(cleaned)
         for w in cleaned.split():
-            if len(w) >= 2:
+            if len(w) >= 2 and w not in STOPWORDS_EN:
                 terms.add(w)
     # 2) 中文关键词 → 英文扩展（长词优先，避免「画图」被「图」抢先）
     mapping = dict(ZH_TO_EN)
@@ -510,6 +571,256 @@ def semantic_scores(entries, terms):
     return scores
 
 
+# ── 语义后端：探测 / 向量 / 融合 ──
+# 状态放在模块级字典里，doctor 与 query/suggest 共用一次探测结果（避免重复加载模型）。
+SEM_STATE = {"checked": False, "backend": None, "reason": "未探测", "source": None}
+
+DEFAULT_MODELS = {
+    "sentence-transformers": "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2",
+    "fastembed": "BAAI/bge-small-zh-v1.5",
+    "openai": "text-embedding-3-small",
+}
+
+
+def _spec(name, spec_fn=None):
+    """查模块是否存在（只看不 import，不执行第三方代码）。测试可注入。"""
+    fn = spec_fn or importlib.util.find_spec
+    try:
+        return fn(name)
+    except Exception:
+        return None
+
+
+def _local_backend(kind, model, spec_fn=None):
+    """构造本机嵌入后端：延迟 import，只在真的要用时才加载模型。"""
+    if kind == "sentence-transformers":
+        mod = importlib.import_module("sentence_transformers")
+        st_model = mod.SentenceTransformer(model)
+
+        def encode(texts):
+            vecs = st_model.encode(list(texts), normalize_embeddings=True)
+            return [[float(x) for x in v] for v in vecs]
+    else:  # fastembed
+        mod = importlib.import_module("fastembed")
+        fe_model = mod.TextEmbedding(model_name=model)
+
+        def encode(texts):
+            return [[float(x) for x in v] for v in fe_model.embed(list(texts))]
+    return {"kind": "local", "name": kind, "model": model,
+            "key": f"{kind}:{model}", "encode": encode}
+
+
+def _cloud_backend(model, spec_fn=None):
+    if not os.environ.get("OPENAI_API_KEY"):
+        return None
+    mod = importlib.import_module("openai")
+    client = mod.OpenAI()
+
+    def encode(texts):
+        resp = client.embeddings.create(model=model, input=list(texts))
+        out = [None] * len(texts)
+        for item in resp.data:
+            out[item.index] = [float(x) for x in item.embedding]
+        if any(v is None for v in out):
+            raise RuntimeError("云端返回向量不完整")
+        return out
+    return {"kind": "cloud", "name": "openai", "model": model,
+            "key": f"openai:{model}", "encode": encode}
+
+
+def _external_backend(cmd, spec_fn=None):
+    def encode(texts):
+        proc = subprocess.run(cmd, shell=True, input=json.dumps(list(texts)),
+                              capture_output=True, text=True, timeout=180)
+        if proc.returncode != 0:
+            raise RuntimeError(f"外部嵌入命令退出码 {proc.returncode}: "
+                               f"{proc.stderr.strip()[:120]}")
+        data = json.loads(proc.stdout)
+        if isinstance(data, dict):
+            data = data.get("vectors") or data.get("embeddings")
+        if not isinstance(data, list) or len(data) != len(texts):
+            raise RuntimeError(f"外部嵌入命令返回形状不符（期望 {len(texts)} 条）")
+        return [[float(x) for x in v] for v in data]
+    return {"kind": "external", "name": "external-cmd", "model": cmd,
+            "key": f"cmd:{cmd}", "encode": encode}
+
+
+def detect_semantic_backend(env=None, spec_fn=None):
+    """探测可用的语义后端；探测不到返回 None（调用方回退词袋）。
+    任何异常都被吞掉——语义是增强项，绝不能让它拖垮检索主流程。"""
+    env = os.environ if env is None else env
+    mode = (env.get("LJC_SEMANTIC") or "auto").strip().lower()
+    if mode in ("off", "0", "no", "false", "never"):
+        return None, "已用 LJC_SEMANTIC=off 关闭"
+    model_override = (env.get("LJC_SEMANTIC_MODEL") or "").strip() or None
+    cmd = (env.get("LJC_SEMANTIC_CMD") or "").strip()
+    tried = []
+
+    def want(family):
+        return mode in ("auto", family)
+
+    try:
+        if want("local"):
+            for kind in ("sentence-transformers", "fastembed"):
+                tried.append(kind)
+                if _spec(kind.replace("-", "_"), spec_fn) is not None:
+                    model = model_override or DEFAULT_MODELS[kind]
+                    return _local_backend(kind, model, spec_fn), f"{kind}（本机模型）"
+        if want("cloud"):
+            tried.append("openai")
+            if _spec("openai", spec_fn) is not None and env.get("OPENAI_API_KEY"):
+                model = model_override or DEFAULT_MODELS["openai"]
+                return _cloud_backend(model, spec_fn), "openai（云端嵌入）"
+        if want("external") and cmd:
+            tried.append("external-cmd")
+            return _external_backend(cmd, spec_fn), "外部嵌入命令"
+    except Exception as e:  # 加载模型/初始化客户端失败 → 当作没有
+        return None, f"后端初始化失败（{e}），已回退词袋"
+    if mode != "auto":
+        return None, f"LJC_SEMANTIC={mode} 但未找到可用后端（试过 {', '.join(tried) or '—'}）"
+    return None, (f"未检测到嵌入库（试过 {', '.join(tried)}）→ 用内置 TF-IDF 词袋；"
+                  f"想上真语义：pip install sentence-transformers，或设 LJC_SEMANTIC_CMD")
+
+
+def resolve_semantic_backend(env=None, force=False):
+    """带缓存的探测：一次会话只探测一次（加载模型很贵）。"""
+    if SEM_STATE["checked"] and not force:
+        return SEM_STATE["backend"]
+    backend, reason = detect_semantic_backend(env=env)
+    SEM_STATE.update(checked=True, backend=backend, reason=reason)
+    return backend
+
+
+def index_fingerprint(index):
+    """索引指纹：技能集合变了/索引重建了，向量缓存就作废重算。"""
+    names = sorted(e.get("name", "") for e in index.get("skills", []))
+    digest = hashlib.md5("\n".join(names).encode("utf-8")).hexdigest()[:12]
+    return f"{index.get('built_at', '')}|{len(names)}|{digest}"
+
+
+def _entry_doc(entry):
+    """送进嵌入模型的文本：名字（拆开连字符）+ 中英双语描述。"""
+    name = (entry.get("name", "") or "").replace("-", " ").replace("_", " ")
+    return " ".join([name, entry.get("description", "") or "",
+                     entry.get("description_zh", "") or ""]).strip()
+
+
+def _cosine(a, b):
+    dot = sum(x * y for x, y in zip(a, b))
+    na = math.sqrt(sum(x * x for x in a)) or 1.0
+    nb = math.sqrt(sum(y * y for y in b)) or 1.0
+    return dot / (na * nb)
+
+
+def load_vectors(index, backend, cache_path=None):
+    """取全部技能的向量：命中缓存直接读，否则算一次并写缓存。
+    返回 (dict name→vector, 来源)；失败返回 (None, 原因)。"""
+    path = cache_path or EMBED_CACHE_PATH
+    fp = index_fingerprint(index)
+    try:
+        if os.path.isfile(path):
+            with open(path, encoding="utf-8") as f:
+                data = json.load(f)
+            if (data.get("fingerprint") == fp and data.get("key") == backend["key"]
+                    and len(data.get("names", [])) == len(data.get("vectors", []))):
+                return dict(zip(data["names"], data["vectors"])), "缓存"
+    except Exception:
+        pass
+    names = [e.get("name", "") for e in index["skills"]]
+    try:
+        vecs = backend["encode"]([_entry_doc(e) for e in index["skills"]])
+    except Exception as e:
+        return None, f"编码失败：{str(e)[:80]}"
+    if not vecs or len(vecs) != len(names):
+        return None, "向量条数与技能数不符"
+    table = {n: [float(x) for x in v] for n, v in zip(names, vecs)}
+    try:
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump({"fingerprint": fp, "key": backend["key"], "names": names,
+                       "vectors": [table[n] for n in names]}, f)
+    except OSError:
+        pass
+    return table, "本次计算"
+
+
+def vector_scores(index, query_text, backend, cache_path=None):
+    """真语义相似度：把查询和每个技能描述各自编码成向量，算余弦。
+    返回 0~1 列表（与 index['skills'] 对齐）；不可用时返回 []（调用方回退词袋）。"""
+    if backend is None:
+        return []
+    try:
+        qv = backend["encode"]([query_text])[0]
+    except Exception as e:
+        SEM_STATE["reason"] = f"查询编码失败（{str(e)[:80]}），已回退词袋"
+        return []
+    table, source = load_vectors(index, backend, cache_path)
+    if not table:
+        SEM_STATE["reason"] = f"语义后端不可用（{source}），已回退词袋"
+        return []
+    SEM_STATE["source"] = f"{backend['name']} {backend['model']} · {source}"
+    return [_cosine(qv, table.get(e.get("name", ""), [])) for e in index["skills"]]
+
+
+# 余弦基线校准（2026-10-26 实测教训）：嵌入模型对「毫不相干的两段短文本」
+# 也常给出 0.3~0.5 的余弦——不加门槛会把无关技能灌满结果。
+# VEC_FLOOR：低于此值视为「没有语义信号」，一分不加。
+# VEC_RESCUE：关键词零命中时，要捞回一个技能需要的向量分（还需同时 ≥ 本轮最高分的 80%）。
+VEC_FLOOR = 0.35
+VEC_RESCUE = 0.50
+VEC_REL_RATIO = 0.8
+VEC_RESCUE_MAX = 10   # 捞回名额上限：召回是补位，不是把半库都搬出来
+
+
+def vec_rescue_ok(vec, i, vmax, floor=VEC_RESCUE, ratio=VEC_REL_RATIO):
+    """纯函数：关键词零命中时，这个技能的向量分是否强到值得捞回。
+    双关：绝对下限（防余弦基线噪声）+ 不低于本轮最高分的 ratio（防「全体都很像」）。"""
+    if not vec:
+        return False
+    return vec[i] >= floor and vec[i] >= ratio * vmax
+
+
+def rescue_indices(vec, vmax, max_n=VEC_RESCUE_MAX):
+    """纯函数：本轮允许被向量捞回的下标集合（按相似度取前 N）。
+    理由：语义召回是补位手段，宁可少捞也不错捞——捞太多等于没检索。"""
+    if not vec:
+        return set()
+    picked = set()
+    for i in sorted(range(len(vec)), key=lambda k: -vec[k]):
+        if not vec_rescue_ok(vec, i, vmax):
+            break  # 降序排列，第一个不满足的之后都不满足
+        picked.add(i)
+        if len(picked) >= max_n:
+            break
+    return picked
+
+
+def fusion_points(tfidf_sim, vec_sim, floor=VEC_FLOOR):
+    """纯函数：把词袋信号与向量信号融合成加分（可测试）。
+    取两者较强者，而非相加——两个引擎都在衡量同一件事，相加会虚高；
+    但两者同时给出有效信号（都 ≥5 分）说明不是巧合，额外 +5 表示一致性。
+    floor 之下视为噪声（余弦基线问题），一律不计分。"""
+    a = int(round(min(max(tfidf_sim or 0.0, 0.0) * 30, 30)))
+    raw = max(vec_sim or 0.0, 0.0)
+    b = int(round(min(raw * 35, 35))) if raw >= floor else 0
+    pts = max(a, b)
+    if a >= 5 and b >= 5:
+        pts = min(pts + 5, 40)
+        return pts, f"tfidf{a}+vec{b}一致+5"
+    if b > a and b >= 5:
+        return pts, f"vec+{b}"
+    if a >= 5:
+        return pts, f"tfidf+{a}"
+    if b >= 5:
+        return pts, f"vec+{b}"
+    return pts, None
+
+
+def semantic_query_text(query, terms):
+    """送给嵌入模型的查询文本：原话 + 扩展词（扩展词多为英文，跨语言时很关键）。"""
+    return (query + " " + " ".join(sorted(terms))).strip()
+
+
 def record_hits(mode, query, scored_names, hidden_names):
     """把一次 query/suggest 的命中追加到本地历史（jsonl，只追加不改写）。
     这是「死技能证据」的数据来源：从未出现在任何记录里的技能，
@@ -576,18 +887,25 @@ def cmd_query(query, top=10, as_json=False):
     scored = []
     hidden = []
     sem = semantic_scores(index["skills"], terms)
+    backend = resolve_semantic_backend()
+    vec = vector_scores(index, semantic_query_text(query, terms), backend) if backend else []
+    vmax = max(vec) if vec else 0.0
+    rescued = rescue_indices(vec, vmax)
     for i, e in enumerate(index["skills"]):
         s, hits = score_entry(e, terms)
-        sem_pts = int(round(min(sem[i] * 30, 30)))
+        vs = vec[i] if vec else None
+        sem_pts, label = fusion_points(sem[i], vs)
         if s <= 0:
-            if sem_pts >= 8:  # 关键词零命中但语义信号强 → 低分候选（扩召回）
-                s, hits = sem_pts, [f"tfidf≈{sem[i]:.2f}"]
+            # 关键词零命中但语义信号强 → 低分候选（扩召回）。
+            # 过三关：绝对下限 + 不低于本轮最高分 80% + 名额上限（防基线噪声灌入）。
+            if sem_pts >= 8 and (not vec or i in rescued):
+                s, hits = sem_pts, [label or f"tfidf≈{sem[i]:.2f}"]
             else:
                 continue
         else:
             s += sem_pts
-            if sem_pts >= 5:
-                hits.append(f"tfidf+{sem_pts}")
+            if label:
+                hits.append(label)
         if e.get("invocation_disabled"):
             hidden.append((s, hits, e))
             continue
@@ -688,11 +1006,16 @@ def cmd_suggest(task, top=10, as_json=False):
         return
     useful, unused = [], []
     sem = semantic_scores(index["skills"], terms)
+    backend = resolve_semantic_backend()
+    vec = vector_scores(index, semantic_query_text(task, terms), backend) if backend else []
     for i, e in enumerate(index["skills"]):
         if e.get("invocation_disabled"):
             continue  # 未注册的本来就不可调用，不参与停用建议
         s, hits = score_entry(e, terms)
-        s += int(round(min(sem[i] * 30, 30)))
+        sem_pts, label = fusion_points(sem[i], vec[i] if vec else None)
+        s += sem_pts
+        if label:
+            hits.append(label)
         if s > 0:
             useful.append((s, hits, e))
         else:
@@ -730,6 +1053,32 @@ def cmd_suggest(task, top=10, as_json=False):
         print(f"   {src} ({len(names)}): {shown}")
     print("\n   停用路径：用户同意后走 skill_management disable（WorkBuddy）；")
     print("   恢复=用户去技能设置里重新打开。本脚本只读，永不自作主张停用。")
+
+
+def cmd_semantic():
+    """语义后端自检：探测到什么、用什么模型、缓存状态；没探测到说明怎么开。"""
+    index = load_index()
+    backend = resolve_semantic_backend(force=True)
+    print("LJC 语义后端自检")
+    if not backend:
+        print(f" 状态：未启用 —— {SEM_STATE['reason']}")
+        print("\n 当前走内置 TF-IDF（纯标准库、词袋级：比字符重叠，不懂同义）。")
+        print(" 想启用真语义（三选一，都是可选的）：")
+        print("   1) 本机模型：pip install sentence-transformers   （离线可跑，首次下载模型约 100~500MB）")
+        print("   2) 本机模型：pip install fastembed               （更轻，onnxruntime 推理）")
+        print("   3) 外部命令：export LJC_SEMANTIC_CMD='你的嵌入命令'  "
+              "（stdin 收 JSON 字符串数组，stdout 吐 JSON 二维数组）")
+        print("\n 关闭探测：export LJC_SEMANTIC=off   指定模型：export LJC_SEMANTIC_MODEL=...")
+        return
+    print(f" 状态：已启用 —— {backend['kind']} / {backend['name']}")
+    print(f" 模型：{backend['model']}")
+    table, source = load_vectors(index, backend)
+    if table:
+        dim = len(next(iter(table.values())))
+        print(f" 向量：{len(table)} 条 × {dim} 维（{source}）")
+        print(f" 缓存：{EMBED_CACHE_PATH}")
+    else:
+        print(f" ⚠ 编码未成功：{source} —— 本次检索将回退词袋")
 
 
 def cmd_list():
@@ -798,6 +1147,13 @@ def cmd_doctor():
             print(" · 命中历史：空（将随 query/suggest 使用自动积累）")
     except Exception:
         pass
+    b = resolve_semantic_backend()
+    if b:
+        print(f" ✓ 语义后端：{SEM_STATE.get('source') or b['key']}"
+              f"（向量召回已启用；缓存 {os.path.basename(EMBED_CACHE_PATH)}）")
+    else:
+        print(f" · 语义后端未启用：{SEM_STATE['reason']}")
+        print("   （不影响使用：已回退内置 TF-IDF 词袋检索）")
     print("\n结论：" + (f"发现 {len(problems)} 项待处理 → {', '.join(problems)}"
                        if problems else "全部正常"))
 
@@ -821,7 +1177,7 @@ def main():
             query = " ".join(sys.argv[2:i])
         else:
             query = " ".join(sys.argv[2:])
-        cmd_query(query, top, as_json)
+        cmd_query(strip_flags(query), top, as_json)
     elif cmd == "suggest":
         if len(sys.argv) < 3:
             print("用法: find.py suggest \"任务描述\" [--top N] [--json]")
@@ -834,7 +1190,7 @@ def main():
             task = " ".join(sys.argv[2:i])
         else:
             task = " ".join(sys.argv[2:])
-        cmd_suggest(task, top, as_json)
+        cmd_suggest(strip_flags(task), top, as_json)
     elif cmd == "stats":
         top = 10
         if "--top" in sys.argv:
@@ -843,6 +1199,8 @@ def main():
         cmd_stats(top)
     elif cmd == "doctor":
         cmd_doctor()
+    elif cmd == "semantic":
+        cmd_semantic()
     elif cmd == "list":
         cmd_list()
     else:
