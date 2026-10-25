@@ -5,6 +5,7 @@
 > A task-to-skill router: decompose your task, sweep local + GitHub catalogs, gate on security, and draw the coverage map.
 
 触发语句（技能模式）：「**请ljc为我指点迷津**」（LJC / ljc 大小写均可）。
+等价说法（歧义更小，推荐）：「**用 LJC 找技能**：\<任务\>」「**让 LJC 路由这个任务**：\<任务\>」。
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 ![Python 3.8+](https://img.shields.io/badge/python-3.8%2B-blue.svg)
