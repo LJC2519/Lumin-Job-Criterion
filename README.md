@@ -55,6 +55,10 @@ ln -s "$PWD" ~/.workbuddy/skills/lumin-job-criterion
 
 （停用 = `rm` 符号链接，仓库本体不动。）
 
+> 技能注册名是 **`ljc`**（触发匹配用：用户说「请ljc为我指点迷津」或任何含
+> ljc 的消息即命中）；目录名与仓库名保持 `lumin-job-criterion` 不变。
+> 若自动触发偶有不灵，最稳的方式是点名：「用 ljc 技能：\<任务\>」。
+
 ## 用法
 
 技能模式：对 AI 说「请ljc为我指点迷津」+ 你的任务。
