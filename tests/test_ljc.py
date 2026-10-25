@@ -328,7 +328,7 @@ def _stub_backend():
     """关键词式假后端（不联网、不加载模型）：命中合同语义词→[1,0]，否则→[0,1]。
     不用整串查表，是为了不被 _entry_doc 的拼接细节绊倒。"""
 
-    def encode(texts):
+    def encode(texts, kind="doc"):
         keys = ("合同", "contract", "review", "审")
         return [[1.0, 0.0] if any(k in t.lower() for k in keys) else [0.0, 1.0]
                 for t in texts]
@@ -401,7 +401,7 @@ class TestSemanticBackend(unittest.TestCase):
     def test_encode_failure_falls_back_silently(self):
         """后端报异常 → 返回空列表（调用方回退词袋），绝不冒泡炸掉检索。"""
 
-        def boom(texts):
+        def boom(texts, kind="doc"):
             raise RuntimeError("model not downloaded")
         backend = {"kind": "local", "name": "stub", "model": "m", "key": "k",
                    "encode": boom}
@@ -418,7 +418,7 @@ class TestSemanticBackend(unittest.TestCase):
         index = _fake_index()
         calls = {"n": 0}
 
-        def encode(texts):
+        def encode(texts, kind="doc"):
             calls["n"] += 1
             return [[1.0, 0.0] for _ in texts]
         backend = {"kind": "local", "name": "stub", "model": "m", "key": "k",
@@ -460,6 +460,44 @@ class TestSemanticBackend(unittest.TestCase):
         self.assertEqual(find.fusion_points(0.0, find.VEC_FLOOR - 0.01)[0], 0)
         self.assertGreater(find.fusion_points(0.0, find.VEC_FLOOR + 0.01)[0], 0)
 
+    def test_reexec_needed_only_when_bag_weak(self):
+        """换解释器也要懒：词袋够用就不 fork 探测（省零点几秒 + 省一行噪音）。"""
+        idx = {"skills": [{"name": f"c{i}", "description": "contract review",
+                           "description_zh": ""} for i in range(4)]}
+        orig = find.load_index
+        find.load_index = lambda: idx
+        try:
+            self.assertFalse(find.reexec_needed(["find.py", "query", "contract"]))
+            self.assertTrue(find.reexec_needed(["find.py", "query", "zzz-unknown"]))
+            self.assertTrue(find.reexec_needed(["find.py", "query"]))  # 参数不全→保守
+        finally:
+            find.load_index = orig
+
+    def test_lazy_loading_skips_model_when_bag_enough(self):
+        """词袋命中够多就不加载模型（加载 10~15 秒 vs 词袋 0.09 秒）。"""
+        self.assertFalse(find.needs_vector(34))
+        self.assertFalse(find.needs_vector(find.VEC_LAZY_MIN))
+        self.assertTrue(find.needs_vector(find.VEC_LAZY_MIN - 1))
+        self.assertTrue(find.needs_vector(0))
+
+    def test_prefix_only_for_retrieval_models(self):
+        """bge/e5/gte 系要带 query: 前缀，paraphrase 系不能带（带了反而偏）。"""
+        self.assertTrue(find._needs_prefix("BAAI/bge-m3"))
+        self.assertTrue(find._needs_prefix("intfloat/multilingual-e5-small"))
+        self.assertFalse(find._needs_prefix(
+            "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2"))
+        seen = {}
+
+        def spy(texts):
+            seen["t"] = list(texts)
+            return [[1.0, 0.0] for _ in texts]
+        find._with_prefix(spy, "BAAI/bge-m3")(["做合同审查"], kind="query")
+        self.assertTrue(seen["t"][0].startswith("query: "))
+        find._with_prefix(spy, "BAAI/bge-m3")(["某技能描述"])
+        self.assertTrue(seen["t"][0].startswith("passage: "))
+        find._with_prefix(spy, "paraphrase-multilingual-MiniLM-L12-v2")(["做合同审查"])
+        self.assertFalse(seen["t"][0].startswith(("query: ", "passage: ")))
+
     def test_rescue_needs_absolute_and_relative(self):
         """捞回要过双关：绝对下限 + 不低于本轮最高分的 80%。"""
         self.assertTrue(find.vec_rescue_ok([0.9, 0.9], 0, 0.9))
@@ -475,6 +513,52 @@ class TestSemanticBackend(unittest.TestCase):
         self.assertIn(0, picked)
         self.assertNotIn(14, picked)
         self.assertEqual(find.rescue_indices([], 0.0), set())
+
+    def test_candidate_interpreters_dedup(self):
+        """只走登记过的路径（env 指定 + 托管 venv），去重保序。"""
+        import tempfile
+        d = tempfile.mkdtemp()
+        try:
+            os.makedirs(os.path.join(d, "a", "bin"))
+            open(os.path.join(d, "a", "bin", "python3"), "w").close()
+            os.makedirs(os.path.join(d, "b", "bin"))  # 没有 python3，应被跳过
+            cands = find.candidate_interpreters(envs_dir=d)
+            self.assertEqual(len(cands), 1)
+            self.assertTrue(cands[0].endswith("a/bin/python3"))
+        finally:
+            shutil.rmtree(d, ignore_errors=True)
+
+    def test_candidates_empty_dir(self):
+        self.assertEqual(find.candidate_interpreters(envs_dir="/nonexistent-xyz"), [])
+
+    def test_find_semantic_python_uses_cache(self):
+        """缓存命中就不再 fork 探测（用假探测函数验证调用次数）。"""
+        import tempfile
+        d = tempfile.mkdtemp()
+        try:
+            cache = os.path.join(d, "semantic_py.txt")
+            fake_py = os.path.join(d, "bin")
+            os.makedirs(fake_py)
+            py = os.path.join(fake_py, "python3")
+            with open(py, "w") as f:
+                f.write("#!/bin/sh\n")
+            with open(cache, "w", encoding="utf-8") as f:
+                f.write(py)
+            calls = {"n": 0}
+
+            def fake_probe(p):
+                calls["n"] += 1
+                return True
+            orig = find.interpreter_has_backend
+            find.interpreter_has_backend = fake_probe
+            try:
+                got = find.find_semantic_python(cache_path=cache, envs_dir="/nonexistent-xyz")
+                self.assertEqual(got, py)
+                self.assertEqual(calls["n"], 1, "缓存有效时应只校验一次")
+            finally:
+                find.interpreter_has_backend = orig
+        finally:
+            shutil.rmtree(d, ignore_errors=True)
 
     def test_fingerprint_changes_with_skills(self):
         a = find.index_fingerprint(_fake_index())

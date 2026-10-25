@@ -136,7 +136,7 @@ python3 scripts/find.py semantic
 | 办法                 | 怎么开                                                                                                          | 代价                          |
 | ------------------ | ------------------------------------------------------------------------------------------------------------ | --------------------------- |
 | **宿主模型意译**（零依赖，默认靠它） | 检索前把任务意译成 3–5 组语义相同、措辞不同的查询（中英皆可），分别检索后合并去重——SKILL.md 已写进流程，立即生效                                             | 多跑几次检索，零安装                  |
-| **向量后端**（软依赖，自动探测）  | `pip install sentence-transformers`（或 `fastembed`）；也可 `export LJC_SEMANTIC_CMD='你的嵌入命令'`，或装 `openai` + 设 API KEY | 本机模型约 100–500MB；云端要联网、有隐私代价 |
+| **向量后端**（软依赖，自动探测）  | `pip install sentence-transformers`（或 `fastembed`）；也可 `export LJC_SEMANTIC_CMD='你的嵌入命令'`，或装 `openai` + 设 API KEY | 本机模型约 100MB–2GB；云端要联网、有隐私代价 |
 
 设计取舍：**`find.py` 永不 import 任何第三方库**——用了 `importlib.util.find_spec` 探测，
 探测到才加载；探测不到、或加载/调用失败，一律**静默回退词袋**，绝不报错、绝不影响主流程。
@@ -149,8 +149,26 @@ python3 scripts/find.py semantic
 - **相对门槛** `VEC_REL_RATIO=0.8`：零关键词要被捞回，需 ≥ 本轮最高分的 80%
 - **名额上限** `VEC_RESCUE_MAX=10`：语义召回是补位，不是把半库搬出来
 
+**懒加载（重要）**：加载模型约 10–15 秒，词袋检索 0.1 秒——「秒回」是本地检索的命根子，
+不能为锦上添花的能力把它赔进去。所以规则是：**关键词命中 ≥3 个就不加载模型**，
+只有词袋答不上来（零命中/弱命中）时才请模型出山（连「换解释器」这一步也是懒的）。
+实测：常规查询 **0.107 秒**（不加载模型）；零命中查询 16 秒（首次含编码 179 条）。
+
+**默认模型 `BAAI/bge-m3`**（检索型多语言，1024 维；`pip install sentence-transformers` 后自动下载）。
+选型依据是 2026-10-26 的真机 A/B（8 查询 × 179 技能）：检索型模型衡量「该不该被检索到」，
+释义型（paraphrase-*）衡量「两句话像不像」，后者不是为检索设计的。bge-m3 在「画流程图」
+上给对 `editorial-diagram-designer`，paraphrase 给错 `writing-shape`；余弦分布也从
+0.36–0.55 抬到 0.49–0.63（区分度更好）。bge/e5/gte 系**必须带 `query:` / `passage:` 前缀**，
+脚本按模型名自动加，不用手工配。换模型：`export LJC_SEMANTIC_MODEL=...`。
+
 向量结果按索引指纹缓存到 `scripts/.cache/embeddings.json`（技能集合或索引一变就作废重算）。
 自检：`python3 scripts/find.py semantic`；关闭：`export LJC_SEMANTIC=off`。
+
+> **跨解释器重启**：脚本可能是被「没装嵌入库的那个 python」跑的（技能里写的就是通用
+> `python3`），而按隔离惯例包装在 venv 里。探测不到时，`find.py` 会去找别处装了嵌入库的
+> 解释器（`LJC_SEMANTIC_PY`，或 `~/.workbuddy/binaries/python/envs/*/bin/python3`），
+> 找到了就换解释器重启自己（结果缓存，只 fork 一次）。换不成就用当前的继续跑，绝不报错。
+> 全程受 `LJC_NO_REEXEC=1` 与 `LJC_SEMANTIC=off` 控制。
 
 ## 安全检查（推荐前的门）
 
@@ -246,6 +264,8 @@ lumin-job-criterion/
 | `LJC_SEMANTIC`             | 语义后端开关：`auto`/`off`/`local`/`cloud`/`external` | `auto`（探测不到即回退词袋） |
 | `LJC_SEMANTIC_MODEL`       | 覆盖嵌入模型名                       | 各后端默认（多语言小模型）    |
 | `LJC_SEMANTIC_CMD`         | 自备嵌入命令（stdin 收 JSON 字符串数组，stdout 吐 JSON 二维数组） | 无         |
+| `LJC_SEMANTIC_PY`          | 指定装了嵌入库的解释器（跨解释器重启用）      | 自动找托管 venv      |
+| `LJC_NO_REEXEC`            | 禁止换解释器重启                        | 无（允许换）        |
 | `scripts/ljc_terms.json`   | 用户自定义术语映射（复制示例文件创建，git 忽略）    | 无                     |
 | `scripts/ljc_sources.json` | tarball 来源登记（复制示例文件创建，git 忽略） | 无                     |
 

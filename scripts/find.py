@@ -575,8 +575,13 @@ def semantic_scores(entries, terms):
 # 状态放在模块级字典里，doctor 与 query/suggest 共用一次探测结果（避免重复加载模型）。
 SEM_STATE = {"checked": False, "backend": None, "reason": "未探测", "source": None}
 
+# 默认模型选型（2026-10-26 真机 A/B 实测，8 个查询 × 179 技能）：
+# bge-m3 是**检索型**多语言模型，paraphrase-multilingual-MiniLM 是**释义型**——
+# 后者衡量「两句话像不像」，前者衡量「这段话该不该被这句话检索到」，后者不是为检索设计的。
+# 实测差别：画流程图 → bge-m3 给 editorial-diagram-designer（对），
+# paraphrase 给 writing-shape（错）；余弦分布 0.36~0.55 → 0.49~0.63，区分度更好。
 DEFAULT_MODELS = {
-    "sentence-transformers": "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2",
+    "sentence-transformers": "BAAI/bge-m3",
     "fastembed": "BAAI/bge-small-zh-v1.5",
     "openai": "text-embedding-3-small",
 }
@@ -591,23 +596,41 @@ def _spec(name, spec_fn=None):
         return None
 
 
+def _needs_prefix(model):
+    """检索型模型（bge / e5 / gte 系）要求查询带 'query: ' 前缀、文档带
+    'passage: ' 前缀——不加前缀效果会明显打折；释义型（paraphrase-*）不需要。"""
+    m = (model or "").lower()
+    return any(k in m for k in ("bge", "e5", "gte", "multilingual-embedding"))
+
+
+def _with_prefix(encode_fn, model):
+    """把前缀规则包在编码函数外面，用户不必手工配前缀。"""
+    if not _needs_prefix(model):
+        return encode_fn
+
+    def encode(texts, kind="doc"):
+        tag = "query: " if kind == "query" else "passage: "
+        return encode_fn([tag + t for t in texts])
+    return encode
+
+
 def _local_backend(kind, model, spec_fn=None):
     """构造本机嵌入后端：延迟 import，只在真的要用时才加载模型。"""
     if kind == "sentence-transformers":
         mod = importlib.import_module("sentence_transformers")
         st_model = mod.SentenceTransformer(model)
 
-        def encode(texts):
+        def raw_encode(texts):
             vecs = st_model.encode(list(texts), normalize_embeddings=True)
             return [[float(x) for x in v] for v in vecs]
     else:  # fastembed
         mod = importlib.import_module("fastembed")
         fe_model = mod.TextEmbedding(model_name=model)
 
-        def encode(texts):
+        def raw_encode(texts):
             return [[float(x) for x in v] for v in fe_model.embed(list(texts))]
     return {"kind": "local", "name": kind, "model": model,
-            "key": f"{kind}:{model}", "encode": encode}
+            "key": f"{kind}:{model}", "encode": _with_prefix(raw_encode, model)}
 
 
 def _cloud_backend(model, spec_fn=None):
@@ -616,7 +639,7 @@ def _cloud_backend(model, spec_fn=None):
     mod = importlib.import_module("openai")
     client = mod.OpenAI()
 
-    def encode(texts):
+    def raw_encode(texts):
         resp = client.embeddings.create(model=model, input=list(texts))
         out = [None] * len(texts)
         for item in resp.data:
@@ -625,11 +648,11 @@ def _cloud_backend(model, spec_fn=None):
             raise RuntimeError("云端返回向量不完整")
         return out
     return {"kind": "cloud", "name": "openai", "model": model,
-            "key": f"openai:{model}", "encode": encode}
+            "key": f"openai:{model}", "encode": _with_prefix(raw_encode, model)}
 
 
 def _external_backend(cmd, spec_fn=None):
-    def encode(texts):
+    def encode(texts, kind="doc"):
         proc = subprocess.run(cmd, shell=True, input=json.dumps(list(texts)),
                               capture_output=True, text=True, timeout=180)
         if proc.returncode != 0:
@@ -680,6 +703,99 @@ def detect_semantic_backend(env=None, spec_fn=None):
         return None, f"LJC_SEMANTIC={mode} 但未找到可用后端（试过 {', '.join(tried) or '—'}）"
     return None, (f"未检测到嵌入库（试过 {', '.join(tried)}）→ 用内置 TF-IDF 词袋；"
                   f"想上真语义：pip install sentence-transformers，或设 LJC_SEMANTIC_CMD")
+
+
+# ── 跨解释器重启 ──
+# 现实问题：脚本可能是被「没装嵌入库的那个 python」跑的（SKILL.md 里写的就是通用
+# python3），而按隔离规则包装在托管 venv 里。为了让语义后端真能用上，
+# 探测不到时换一个装了嵌入库的解释器重启自己——只在确实能换时才换。
+SEM_PY_CACHE = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".cache", "semantic_py.txt")
+
+
+def candidate_interpreters(envs_dir=None):
+    """可能装有嵌入库的其它解释器：env 指定的优先，其次 WorkBuddy 托管 venv。
+    只走登记过的路径，不扫全盘。"""
+    cands = []
+    env_py = (os.environ.get("LJC_SEMANTIC_PY") or "").strip()
+    if env_py:
+        cands.append(env_py)
+    d = envs_dir or os.path.expanduser("~/.workbuddy/binaries/python/envs")
+    try:
+        for name in sorted(os.listdir(d)):
+            p = os.path.join(d, name, "bin", "python3")
+            if os.path.isfile(p):
+                cands.append(p)
+    except OSError:
+        pass
+    out, seen = [], set()
+    for c in cands:
+        if c not in seen:
+            seen.add(c)
+            out.append(c)
+    return out
+
+
+def interpreter_has_backend(py):
+    """问另一个解释器：你那儿有嵌入库吗（只看不 import，很快）。"""
+    code = ("import importlib.util as u; print('1' if (u.find_spec('sentence_transformers')"
+            " or u.find_spec('fastembed')) else '0')")
+    try:
+        r = subprocess.run([py, "-c", code], capture_output=True, text=True, timeout=30)
+        return r.stdout.strip().endswith("1")
+    except Exception:
+        return False
+
+
+def find_semantic_python(cache_path=None, envs_dir=None):
+    """已验证装了嵌入库的解释器路径（结果缓存，避免每次 fork）。"""
+    path = cache_path or SEM_PY_CACHE
+    try:
+        if os.path.isfile(path):
+            with open(path, encoding="utf-8") as f:
+                cached = f.read().strip()
+            if cached and os.path.isfile(cached) and interpreter_has_backend(cached):
+                return cached
+    except OSError:
+        pass
+    for py in candidate_interpreters(envs_dir):
+        if os.path.abspath(py) == os.path.abspath(sys.executable):
+            continue
+        if interpreter_has_backend(py):
+            try:
+                os.makedirs(os.path.dirname(path), exist_ok=True)
+                with open(path, "w", encoding="utf-8") as f:
+                    f.write(py)
+            except OSError:
+                pass
+            return py
+    return None
+
+
+def maybe_reexec(cmds=("query", "suggest", "semantic"), needed=True):
+    """当前解释器没嵌入库、别处有 → 换解释器重启自己。
+    三重保险：LJC_NO_REEXEC 防循环、LJC_SEMANTIC=off 尊重关闭、只在检索类命令上换。
+    needed=False 表示这一轮压根用不到模型（词袋就答得上来），那就连探测都别做
+    ——fork 另一个解释器要零点几秒，不该白花。"""
+    if not needed:
+        return
+    if len(sys.argv) < 2 or sys.argv[1] not in cmds:
+        return
+    if os.environ.get("LJC_NO_REEXEC") or os.environ.get("LJC_SEMANTIC") == "off":
+        return
+    try:
+        if detect_semantic_backend()[0] is not None:
+            return  # 当前解释器就有，不用换
+    except Exception:
+        return
+    py = find_semantic_python()
+    if not py:
+        return
+    env = dict(os.environ, LJC_NO_REEXEC="1")
+    try:
+        print(f"ℹ️ 语义后端在 {py}（当前解释器无嵌入库），切换解释器重跑…", file=sys.stderr)
+        os.execve(py, [py, os.path.abspath(__file__)] + sys.argv[1:], env)
+    except Exception:
+        pass  # 换不成就用当前的继续跑，绝不影响检索
 
 
 def resolve_semantic_backend(env=None, force=False):
@@ -750,7 +866,7 @@ def vector_scores(index, query_text, backend, cache_path=None):
     if backend is None:
         return []
     try:
-        qv = backend["encode"]([query_text])[0]
+        qv = backend["encode"]([query_text], kind="query")[0]
     except Exception as e:
         SEM_STATE["reason"] = f"查询编码失败（{str(e)[:80]}），已回退词袋"
         return []
@@ -770,6 +886,17 @@ VEC_FLOOR = 0.35
 VEC_RESCUE = 0.50
 VEC_REL_RATIO = 0.8
 VEC_RESCUE_MAX = 10   # 捞回名额上限：召回是补位，不是把半库都搬出来
+# 懒加载阈值：关键词命中 ≥ 这个数就不加载模型。
+# 实测（2026-10-26）：加载 bge-m3 约 10~15 秒，词袋检索 0.09 秒——
+# 「秒回」是本地检索的核心卖点，不能为锦上添花的能力把它赔进去。
+# 于是：词袋答得上来就不请模型出山，答不上来（命中太少）才付这份代价。
+VEC_LAZY_MIN = 3
+
+
+def needs_vector(n_keyword_hits, threshold=VEC_LAZY_MIN):
+    """纯函数：这一轮值不值得为语义后端付模型加载的时间？
+    关键词自己就答得上来 → 不值得（保持秒回）；答不上来 → 值得。"""
+    return n_keyword_hits < threshold
 
 
 def vec_rescue_ok(vec, i, vmax, floor=VEC_RESCUE, ratio=VEC_REL_RATIO):
@@ -816,9 +943,14 @@ def fusion_points(tfidf_sim, vec_sim, floor=VEC_FLOOR):
     return pts, None
 
 
-def semantic_query_text(query, terms):
-    """送给嵌入模型的查询文本：原话 + 扩展词（扩展词多为英文，跨语言时很关键）。"""
-    return (query + " " + " ".join(sorted(terms))).strip()
+def semantic_query_text(query, terms=None):
+    """送给嵌入模型的查询文本：**只用用户原话**。
+    2026-10-26 真模型实测（paraphrase-multilingual-MiniLM-L12-v2，179 技能）：
+    把扩展检索词拼进去反而更差——扩展词里含中文整句片段，拼出来重复冗长
+    （如「…条款对我方不利 article clause engagement …条款对我方不利 letter」），
+    嵌入模型吃干净短句最准。实测 top1 从错的 intro-drafter 变回对的
+    contract-review-pro。跨语言由多语言模型自身承担，不必手工拼英文。"""
+    return strip_flags(query).strip()
 
 
 def record_hits(mode, query, scored_names, hidden_names):
@@ -887,19 +1019,26 @@ def cmd_query(query, top=10, as_json=False):
     scored = []
     hidden = []
     sem = semantic_scores(index["skills"], terms)
-    backend = resolve_semantic_backend()
-    vec = vector_scores(index, semantic_query_text(query, terms), backend) if backend else []
+    # 先只跑词袋（毫秒级）：答得上来就不必请模型出山（加载 10~15 秒）。
+    bag = [score_entry(e, terms) for e in index["skills"]]
+    n_bag_hits = sum(1 for s, _ in bag if s > 0)
+    vec = []
+    if needs_vector(n_bag_hits):
+        backend = resolve_semantic_backend()
+        vec = vector_scores(index, semantic_query_text(query, terms), backend) if backend else []
     vmax = max(vec) if vec else 0.0
     rescued = rescue_indices(vec, vmax)
     for i, e in enumerate(index["skills"]):
-        s, hits = score_entry(e, terms)
+        s, hits = bag[i]
         vs = vec[i] if vec else None
         sem_pts, label = fusion_points(sem[i], vs)
         if s <= 0:
             # 关键词零命中但语义信号强 → 低分候选（扩召回）。
             # 过三关：绝对下限 + 不低于本轮最高分 80% + 名额上限（防基线噪声灌入）。
             if sem_pts >= 8 and (not vec or i in rescued):
-                s, hits = sem_pts, [label or f"tfidf≈{sem[i]:.2f}"]
+                # 标注「语义候选」：关键词一个没命中、全靠语义信号捞回来的，
+                # 可信度低于关键词命中项，用户应当知道这一点。
+                s, hits = sem_pts, [f"语义候选·{label or f'tfidf≈{sem[i]:.2f}'}"]
             else:
                 continue
         else:
@@ -1006,12 +1145,17 @@ def cmd_suggest(task, top=10, as_json=False):
         return
     useful, unused = [], []
     sem = semantic_scores(index["skills"], terms)
-    backend = resolve_semantic_backend()
-    vec = vector_scores(index, semantic_query_text(task, terms), backend) if backend else []
+    bag = [score_entry(e, terms) for e in index["skills"]]
+    n_bag_hits = sum(1 for e, (s, _) in zip(index["skills"], bag)
+                     if s > 0 and not e.get("invocation_disabled"))
+    vec = []  # 同 query：词袋答得上来就不加载模型
+    if needs_vector(n_bag_hits):
+        backend = resolve_semantic_backend()
+        vec = vector_scores(index, semantic_query_text(task, terms), backend) if backend else []
     for i, e in enumerate(index["skills"]):
         if e.get("invocation_disabled"):
             continue  # 未注册的本来就不可调用，不参与停用建议
-        s, hits = score_entry(e, terms)
+        s, hits = bag[i]
         sem_pts, label = fusion_points(sem[i], vec[i] if vec else None)
         s += sem_pts
         if label:
@@ -1158,7 +1302,30 @@ def cmd_doctor():
                        if problems else "全部正常"))
 
 
+def reexec_needed(argv):
+    """这一轮要不要为语义后端换解释器？先廉价地估一下词袋命中数再决定。
+    估不出来（索引坏了等）就保守返回 True——宁可多换一次，不要漏掉语义能力。"""
+    if len(argv) < 3:
+        return True
+    text = strip_flags(" ".join(argv[2:]))
+    if not text:
+        return True
+    try:
+        index = load_index()
+        terms = expand_query(text)
+        if not terms:
+            return True
+        n = sum(1 for e in index["skills"] if score_entry(e, terms)[0] > 0)
+        return needs_vector(n)
+    except Exception:
+        return True
+
+
 def main():
+    if len(sys.argv) >= 2 and sys.argv[1] in ("query", "suggest"):
+        maybe_reexec(needed=reexec_needed(sys.argv))
+    elif len(sys.argv) >= 2 and sys.argv[1] == "semantic":
+        maybe_reexec()
     if len(sys.argv) < 2:
         print(__doc__)
         return
