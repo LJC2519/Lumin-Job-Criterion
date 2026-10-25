@@ -60,7 +60,7 @@ LJC 把「找技能」从碰运气变成流水线：
 ```bash
 git clone https://github.com/<your-name>/lumin-job-criterion.git
 cd lumin-job-criterion
-python3 scripts/find.py build   # 建本地索引
+python3 scripts/find.py build   # 建本地索引（之后索引过期会自动重建，一般无需手动）
 ```
 
 作为技能使用（WorkBuddy / Claude Code 等 SKILL.md 体系）：
@@ -139,9 +139,12 @@ GitHub 目标若是合集仓库（如 `anthropics/skills`），自动树形抽�
 推荐前顺手查「已装技能有没有过期」：
 
 ```bash
-python3 scripts/check_updates.py                        # 全量
+python3 scripts/check_updates.py                        # 全量更新检测
 python3 scripts/check_updates.py code-review pdf        # 指定技能
 python3 scripts/check_updates.py --record superpowers   # 更新后记录新 SHA
+python3 scripts/find.py stats --top 10                  # 命中统计 + 从未命中的死技能
+python3 scripts/find.py query "..." --json              # 机器可读输出
+python3 scripts/find.py doctor                          # 一键自检
 ```
 
 三轨检测：
@@ -231,7 +234,7 @@ python3 tests/test_ljc.py   # 16 项，零网络零文件系统，秒级
 | GitHub 搜索 403 / 提示限额 | 未认证 search 10 次/分、core 60 次/时 | 设 `GITHUB_TOKEN`；或等限额重置 |
 | 目录抓取失败 | 网络不通或限额 | 有旧缓存会自动用并声明；`--refresh` 重试 |
 | SkillsMP 搜不到 | 脚本不直连（API 403、页面 JS 渲染） | 走 MCP 连接器；或 WebFetch 其搜索页 |
-| 索引结果过期 | 装了新技能没 build | `query` 会提醒；重跑 `build` |
+| 索引结果过期 | 装了新技能没 build | 自动重建（<1 秒，下次 query 生效）；也可手动 `build` |
 | 安全检查误报 | 讨论安全话题的技能自带关键词 | 已知类；看命中行自己判断 |
 | 推荐了某技能但加载不了 | 它被作者禁用了模型调用 | 输出分区会标明「下载了，但没有注册」+ 开放路径 |
 | 中文查询 GitHub 命中少 | GitHub 搜索对中文效果差 | 脚本会警告；先想好英文关键词再搜 |

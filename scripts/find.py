@@ -28,6 +28,7 @@ from collections import Counter
 
 SKILLS_DIR = os.environ.get("LJC_SKILLS_DIR") or os.path.expanduser("~/.workbuddy/skills")
 INDEX_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "index.json")
+HISTORY_PATH = os.path.abspath(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "hits_history.jsonl"))
 
 # ── 已下载已安装、但未开放模型调用的技能 ──
 # 检测机制（可移植、自维护，不写死名单）：build 时读每个技能 SKILL.md 的
@@ -274,8 +275,9 @@ def default_roots():
     return roots
 
 
-def build_index():
+def build_index(quiet=False):
     roots = default_roots()
+    say = (lambda *a, **k: None) if quiet else print
     entries = []
     broken = []
     seen = {}
@@ -333,7 +335,7 @@ def build_index():
             seen[entry["name"]] = entry["source"]
             entries.append(entry)
     index = {
-        "built_at": __import__("time").strftime("%Y-%m-%d %H:%M"),
+        "built_at": __import__("time").strftime("%Y-%m-%d %H:%M:%S"),
         "n_skills": len(entries),
         "n_broken": len(broken),
         "broken": broken,
@@ -343,21 +345,21 @@ def build_index():
     out = os.path.abspath(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "index.json"))
     with open(out, "w", encoding="utf-8") as f:
         json.dump(index, f, ensure_ascii=False, indent=1)
-    print(f"索引已建：{out}")
-    print(f"  已索引技能：{len(entries)} 个（扫描 {len(roots)} 个根）")
+    say(f"索引已建：{out}")
+    say(f"  已索引技能：{len(entries)} 个（扫描 {len(roots)} 个根）")
     for r in roots:
-        print(f"    · {r}")
+        say(f"    · {r}")
     if broken:
-        print(f"  ⚠️ 失效链接：{len(broken)} 个 → {', '.join(broken)}")
+        say(f"  ⚠️ 失效链接：{len(broken)} 个 → {', '.join(broken)}")
     if collisions:
         shown = ", ".join(f"{n}({a}⊂{b})" for n, a, b in collisions[:6])
-        print(f"  ⚠️ 同名去重 {len(collisions)} 个（先到根优先）：{shown}")
+        say(f"  ⚠️ 同名去重 {len(collisions)} 个（先到根优先）：{shown}")
     by_source = {}
     for e in entries:
         by_source.setdefault(e["source"], []).append(e["name"])
-    print("  按来源：")
+    say("  按来源：")
     for src, names in sorted(by_source.items(), key=lambda kv: -len(kv[1])):
-        print(f"    {src}: {len(names)}")
+        say(f"    {src}: {len(names)}")
     return index
 
 
@@ -502,9 +504,65 @@ def semantic_scores(entries, terms):
     return scores
 
 
-def cmd_query(query, top=10):
+def record_hits(mode, query, scored_names, hidden_names):
+    """把一次 query/suggest 的命中追加到本地历史（jsonl，只追加不改写）。
+    这是「死技能证据」的数据来源：从未出现在任何记录里的技能，
+    就是 suggest 关闭建议的硬证据。写失败不影响主流程。"""
+    import time as _t
+    rec = {"ts": _t.strftime("%Y-%m-%dT%H:%M:%S"), "mode": mode,
+           "q": query, "hits": list(scored_names), "unreg": list(hidden_names)}
+    try:
+        with open(HISTORY_PATH, "a", encoding="utf-8") as f:
+            f.write(json.dumps(rec, ensure_ascii=False) + "\n")
+    except OSError:
+        pass
+
+
+def compute_stats(history_path, index):
+    """纯函数：从命中历史算统计（可测试）。"""
+    counts = {}
+    records = 0
+    if os.path.isfile(history_path):
+        with open(history_path, encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    rec = json.loads(line)
+                except Exception:
+                    continue
+                records += 1
+                for name in rec.get("hits", []):
+                    counts[name] = counts.get(name, 0) + 1
+    all_names = {e["name"] for e in index["skills"]
+                 if not e.get("invocation_disabled")}
+    return {"records": records, "counts": counts,
+            "never_hit": sorted(all_names - set(counts))}
+
+
+def cmd_stats(top=10):
     index = load_index()
-    warn_if_stale(index)
+    index = ensure_fresh_index(index)
+    st = compute_stats(HISTORY_PATH, index)
+    print(f"LJC 命中统计 —— 历史 {st['records']} 条记录")
+    if st["records"] == 0:
+        print("  （还没有历史——每次 query/suggest 会自动累积）")
+        return
+    top_hits = sorted(st["counts"].items(), key=lambda kv: -kv[1])[:top]
+    print(f"\n── 命中次数 Top {len(top_hits)} ──")
+    for name, c in top_hits:
+        print(f"  {name:38s} {c} 次")
+    never = st["never_hit"]
+    print(f"\n── 从未被任何查询命中（{len(never)} 个）——关闭候选的硬证据 ──")
+    for name in never:
+        print(f"  · {name}")
+    print("\n   关闭需你同意：WorkBuddy 走 skill_management disable，恢复=设置里重开。")
+
+
+def cmd_query(query, top=10, as_json=False):
+    index = load_index()
+    index = ensure_fresh_index(index)
     terms = expand_query(query)
     if not terms:
         print("查询为空")
@@ -530,6 +588,20 @@ def cmd_query(query, top=10):
         scored.append((s, hits, e))
     scored.sort(key=lambda x: (-x[0], x[2]["name"]))
     hidden.sort(key=lambda x: -x[0])
+    record_hits("query", query, [e["name"] for _, _, e in scored],
+                [e["name"] for _, _, e in hidden])
+    if as_json:
+        print(json.dumps({
+            "query": query, "terms": sorted(terms),
+            "results": [{"name": e["name"], "source": e["source"], "score": s,
+                         "hits": hits,
+                         "description": (e.get("description") or e.get("description_zh") or "")}
+                        for s, hits, e in scored],
+            "unregistered": [{"name": e["name"], "source": e["source"], "score": s,
+                              "description": (e.get("description") or e.get("description_zh") or "")}
+                             for s, hits, e in hidden],
+        }, ensure_ascii=False, indent=1))
+        return
     n_total = index.get("n_skills", len(index["skills"]))
 
     def print_hidden():
@@ -570,10 +642,14 @@ def cmd_query(query, top=10):
     print_hidden()
 
 
-def warn_if_stale(index):
-    """索引新鲜度自检：任一扫描根在索引建成后有变动就提醒。"""
+def ensure_fresh_index(index):
+    """索引过期（任一扫描根比 built_at 新 5 秒以上）时自动重建——自愈而非提醒。
+    built_at 精确到秒、阈值 5 秒：分钟精度曾导致『目录创建于重建后 57 秒』
+    这种差值被 60 秒阈值卡死、自愈永不触发的 bug（2026-10-26 实测）。
+    177 个技能全量重建 <1 秒，自动重建比 launchd 监听更简单可靠。
+    返回（可能已重建的）index。"""
+    import time as _t
     try:
-        import time as _t
         roots = index.get("roots") or [SKILLS_DIR]
         newest = 0
         for root in roots:
@@ -581,17 +657,25 @@ def warn_if_stale(index):
                 continue
             newest = max(newest, max(
                 os.path.getmtime(os.path.join(root, n)) for n in os.listdir(root)))
-        built = _t.mktime(_t.strptime(index.get("built_at", ""), "%Y-%m-%d %H:%M"))
-        if newest - built > 60:
-            print(f"⚠️ 索引建于 {index.get('built_at')}，技能目录此后有变动——建议先跑一次 build。\n")
+        built = 0
+        for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%d %H:%M"):
+            try:
+                built = _t.mktime(_t.strptime(index.get("built_at", ""), fmt))
+                break
+            except ValueError:
+                continue
+        if newest - built > 5:
+            print("ℹ️ 索引已过期，自动重建…")
+            return build_index(quiet=True)
     except Exception:
         pass
+    return index
 
 
-def cmd_suggest(task, top=10):
+def cmd_suggest(task, top=10, as_json=False):
     """任务视角的技能盘点：相关候选 vs 本次用不到（可暂时关掉的候选）。"""
     index = load_index()
-    warn_if_stale(index)
+    index = ensure_fresh_index(index)
     terms = expand_query(task)
     if not terms:
         print("任务描述为空")
@@ -608,6 +692,17 @@ def cmd_suggest(task, top=10):
         else:
             unused.append(e)
     useful.sort(key=lambda x: (-x[0], x[2]["name"]))
+    record_hits("suggest", task, [e["name"] for _, _, e in useful],
+                [e["name"] for e in unused])
+    if as_json:
+        print(json.dumps({
+            "task": task, "terms": sorted(terms),
+            "useful": [{"name": e["name"], "source": e["source"], "score": s,
+                        "description": (e.get("description") or e.get("description_zh") or "")}
+                       for s, hits, e in useful],
+            "unused": [e["name"] for e in unused],
+        }, ensure_ascii=False, indent=1))
+        return
     print(f"任务「{task}」→ 扩展检索词 {len(terms)} 个：{len(useful)} 个相关候选，{len(unused)} 个本次用不到。\n")
     print(f"── 任务相关候选（{len(useful)} 个，按相关度排序，仍需读原文核实）──\n")
     for i, (s, hits, e) in enumerate(useful[:top], 1):
@@ -688,6 +783,15 @@ def cmd_doctor():
         print(f" ✓ 技能目录缓存：{n} 个文件（7 天 TTL，--refresh 强刷）")
     else:
         print(" · 技能目录缓存：空（首次 --catalog 会抓取）")
+    try:
+        st = compute_stats(HISTORY_PATH, index)
+        if st["records"]:
+            print(f" ✓ 命中历史：{st['records']} 条记录；"
+                  f"从未被命中 {len(st['never_hit'])} 个（find.py stats 看详情）")
+        else:
+            print(" · 命中历史：空（将随 query/suggest 使用自动积累）")
+    except Exception:
+        pass
     print("\n结论：" + (f"发现 {len(problems)} 项待处理 → {', '.join(problems)}"
                        if problems else "全部正常"))
 
@@ -701,28 +805,36 @@ def main():
         build_index()
     elif cmd == "query":
         if len(sys.argv) < 3:
-            print("用法: find.py query \"关键词\" [--top N]")
+            print("用法: find.py query \"关键词\" [--top N] [--json]")
             return
         top = 10
+        as_json = "--json" in sys.argv
         if "--top" in sys.argv:
             i = sys.argv.index("--top")
             top = int(sys.argv[i + 1])
             query = " ".join(sys.argv[2:i])
         else:
             query = " ".join(sys.argv[2:])
-        cmd_query(query, top)
+        cmd_query(query, top, as_json)
     elif cmd == "suggest":
         if len(sys.argv) < 3:
-            print("用法: find.py suggest \"任务描述\" [--top N]")
+            print("用法: find.py suggest \"任务描述\" [--top N] [--json]")
             return
         top = 10
+        as_json = "--json" in sys.argv
         if "--top" in sys.argv:
             i = sys.argv.index("--top")
             top = int(sys.argv[i + 1])
             task = " ".join(sys.argv[2:i])
         else:
             task = " ".join(sys.argv[2:])
-        cmd_suggest(task, top)
+        cmd_suggest(task, top, as_json)
+    elif cmd == "stats":
+        top = 10
+        if "--top" in sys.argv:
+            i = sys.argv.index("--top")
+            top = int(sys.argv[i + 1])
+        cmd_stats(top)
     elif cmd == "doctor":
         cmd_doctor()
     elif cmd == "list":

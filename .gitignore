@@ -2,6 +2,7 @@ index.json
 .cache/
 ljc_terms.json
 ljc_sources.json
+hits_history.jsonl
 __pycache__/
 *.pyc
 .DS_Store

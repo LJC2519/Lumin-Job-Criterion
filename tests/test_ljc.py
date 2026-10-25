@@ -279,3 +279,20 @@ class TestSearchBoost(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
+
+class TestHitHistory(unittest.TestCase):
+    def test_compute_stats(self):
+        import find
+        import tempfile
+        d = tempfile.mkdtemp()
+        hp = os.path.join(d, "h.jsonl")
+        with open(hp, "w", encoding="utf-8") as f:
+            f.write(json.dumps({"ts": "t", "mode": "query", "q": "a",
+                                "hits": ["x", "y"], "unreg": []}) + "\n")
+            f.write(json.dumps({"ts": "t", "mode": "query", "q": "b",
+                                "hits": ["x"], "unreg": []}) + "\n")
+        index = {"skills": [{"name": "x"}, {"name": "y"}, {"name": "z"}]}
+        st = find.compute_stats(hp, index)
+        self.assertEqual(st["records"], 2)
+        self.assertEqual(st["counts"]["x"], 2)
+        self.assertEqual(st["never_hit"], ["z"])
