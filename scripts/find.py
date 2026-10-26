@@ -222,6 +222,14 @@ ZH_TO_EN = {
     "审": ["audit", "review", "inspect", "examine"],
     "审查": ["audit", "review", "inspect"],
     "把关": ["gatekeep", "verify", "quality check", "vet"],
+    # ── 逆向工程域（2026-10-27 补：让「反编译/反汇编/二进制/固件/拆包/electron」
+    #    直达 reverse-engineer-anything；"逆向"早前已映射，此处补其余近义与子域词）──
+    "反编译": ["decompile", "reverse engineer", "disassemble", "逆向"],
+    "反汇编": ["disassemble", "decompile", "reverse engineer"],
+    "二进制": ["binary", "reverse engineer", "decompile", "逆向"],
+    "固件": ["firmware", "reverse engineer", "embedded", "iot"],
+    "拆包": ["unpack", "decompile", "reverse engineer", "asar"],
+    "electron": ["electron", "javascript", "reverse engineer", "decompile"],
 }
 
 
