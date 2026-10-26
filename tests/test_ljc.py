@@ -3,7 +3,7 @@
 
 运行：python3 tests/test_ljc.py   （在技能根目录或任意位置跑均可）
 覆盖：find.py（术语扩展/排序/停用检测）、github_search.py（目录解析/树形目录）、
-      security_check.py（BLOCK/WARN 模式）。
+      security_check.py（BLOCK/WARN 模式）、web_search.py（Tavily 全网语义搜索）。
 新功能先在此写 RED 测试，再实现——项目纪律。
 """
 import json
@@ -13,6 +13,7 @@ import sys
 import tempfile
 import types
 import unittest
+from unittest import mock
 
 SCRIPTS = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "scripts")
 sys.path.insert(0, SCRIPTS)
@@ -20,6 +21,7 @@ sys.path.insert(0, SCRIPTS)
 import find  # noqa: E402
 import github_search  # noqa: E402
 import security_check  # noqa: E402
+import web_search  # noqa: E402
 
 
 class TestExpandQuery(unittest.TestCase):
@@ -915,6 +917,99 @@ class TestRerank(unittest.TestCase):
                "accept": ["x"], "must_not": []}
         out = run_eval.apply_judgments([row], {"9": {"a": 0.9}})
         self.assertIs(out[0], row)  # 没判的用例原样返回，不改写
+
+
+class _FakeResp:
+    """模拟 urllib.response：支持 `with urlopen(...) as r` 与 r.read()。"""
+    def __init__(self, payload):
+        self._b = json.dumps(payload).encode("utf-8")
+    def __enter__(self):
+        return self
+    def __exit__(self, *a):
+        return False
+    def read(self):
+        return self._b
+
+
+class TestWebSearch(unittest.TestCase):
+    def test_classify_github_repo(self):
+        cat, repo, name = web_search.classify_url("https://github.com/foo/bar-skill")
+        self.assertEqual(cat, "GitHub 仓库")
+        self.assertEqual(repo, "foo/bar-skill")
+        self.assertEqual(name, "bar-skill")
+
+    def test_classify_github_tree_path(self):
+        cat, repo, _ = web_search.classify_url(
+            "https://github.com/foo/bar/tree/main/skills/x")
+        self.assertEqual(cat, "GitHub 仓库")
+        self.assertEqual(repo, "foo/bar")  # /tree/ 后截掉
+
+    def test_classify_market(self):
+        cat, repo, name = web_search.classify_url("https://skillsmp.com/something")
+        self.assertEqual(cat, "技能市场")
+        self.assertIsNone(repo)
+        self.assertEqual(name, "skillsmp.com")
+
+    def test_classify_web(self):
+        cat, repo, name = web_search.classify_url("https://example.com/blog/post")
+        self.assertEqual(cat, "网页")
+        self.assertIsNone(repo)
+        self.assertEqual(name, "example.com")
+
+    def test_build_queries_includes_agent_skill(self):
+        qs = web_search.build_queries("把 PDF 转成 Word")
+        self.assertTrue(any("agent skill" in q for q in qs))
+        # 中文任务也会被原样带进查询（Tavily 是多语语义引擎）
+        self.assertTrue(any("PDF" in q and "Word" in q for q in qs))
+
+    def test_build_queries_english_variant(self):
+        qs = web_search.build_queries("knowledge graph")
+        self.assertTrue(any("claude code skill" in q for q in qs))
+
+    def test_extract_candidates_normalizes(self):
+        raw = [{"title": "PDF 转 Word 技能", "url": "https://github.com/a/b",
+                "content": "把 PDF 转成可编辑 Word", "score": 0.91}]
+        cands = web_search.extract_candidates(raw)
+        self.assertEqual(len(cands), 1)
+        c = cands[0]
+        self.assertEqual(c["category"], "GitHub 仓库")
+        self.assertEqual(c["repo"], "a/b")
+        self.assertAlmostEqual(c["score"], 0.91)
+        self.assertIn("PDF 转 Word 技能", c["desc"])
+
+    def test_tavily_search_parses_payload(self):
+        payload = {"results": [
+            {"title": "T", "url": "https://github.com/o/r", "content": "c", "score": 0.8}]}
+        with mock.patch.object(web_search.urllib.request, "urlopen",
+                               lambda req, timeout=0: _FakeResp(payload)):
+            ok, raw, err = web_search.tavily_search("q", "key")
+        self.assertTrue(ok)
+        self.assertEqual(len(raw), 1)
+        self.assertEqual(raw[0]["url"], "https://github.com/o/r")
+        self.assertEqual(err, "")
+
+    def test_search_web_no_key_skips(self):
+        with mock.patch.object(web_search, "api_key", lambda: ""), \
+             mock.patch.object(web_search, "_load_cache", lambda *a, **k: None):
+            cands = web_search.search_web("anything", refresh=True)
+        self.assertEqual(cands, [])
+
+    def test_search_web_dedupes_and_sorts(self):
+        fake = [
+            {"title": "A", "url": "https://github.com/x/a-skill", "content": "does X", "score": 0.9},
+            {"title": "B", "url": "https://github.com/y/b-skill", "content": "does Y", "score": 0.7},
+            {"title": "A2", "url": "https://github.com/x/a-skill", "content": "updated", "score": 0.95},
+        ]
+        with mock.patch.object(web_search, "tavily_search", lambda q, key, **kw: (True, fake, "")), \
+             mock.patch.object(web_search, "api_key", lambda: "tvly-test"), \
+             mock.patch.object(web_search, "_load_cache", lambda *a, **k: None), \
+             mock.patch.object(web_search, "_save_cache", lambda *a, **k: None):
+            cands = web_search.search_web("do X", limit=10, refresh=True)
+        # 同 URL 去重 → 2 条；a-skill 保留最高分 0.95
+        self.assertEqual(len(cands), 2)
+        self.assertEqual(cands[0]["score"], 0.95)
+        self.assertEqual(cands[0]["repo"], "x/a-skill")
+        self.assertEqual(cands[1]["url"], "https://github.com/y/b-skill")
 
 
 if __name__ == "__main__":

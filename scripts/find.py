@@ -286,36 +286,68 @@ def pick_latest_version(versions, plugin_dir=None):
     return max(versions, key=key)
 
 
+def _plugin_skills_roots(base):
+    """扫一个 plugins base（app 内置 resources/plugins 或 ~/.workbuddy/plugins/cache）
+    下所有 <org>/<plugin>/<latest>/skills，每插件取最新版，返回 root 列表。
+    app 内置与 cache 用同一函数，靠 build_index 的 seen 同名去重合并。"""
+    out = []
+    if not os.path.isdir(base):
+        return out
+    for org in sorted(os.listdir(base)):
+        org_dir = os.path.join(base, org)
+        if not os.path.isdir(org_dir):
+            continue
+        for plugin in sorted(os.listdir(org_dir)):
+            plugin_dir = os.path.join(org_dir, plugin)
+            if not os.path.isdir(plugin_dir):
+                continue
+            versions = [v for v in os.listdir(plugin_dir)
+                        if os.path.isdir(os.path.join(plugin_dir, v, "skills"))]
+            if not versions:
+                continue
+            latest = pick_latest_version(versions, plugin_dir)
+            out.append(os.path.join(plugin_dir, latest, "skills"))
+    return out
+
+
+def _dedupe_roots(roots):
+    """按 realpath 去重并保序（app 内置与 cache 可能指向同一路径）。"""
+    seen, uniq = set(), []
+    for r in roots:
+        rp = os.path.realpath(r)
+        if rp in seen:
+            continue
+        seen.add(rp)
+        uniq.append(r)
+    return uniq
+
+
 def default_roots():
-    """扫描根列表（2026-10-25 扩为多根）：用户技能目录 + WorkBuddy 内置技能
-    + 插件缓存（cache/<org>/<plugin>/<version>/skills，每插件只取最新版，
-    避免同插件多版本重复索引）。
+    """扫描根列表：用户技能目录 + app 内置技能 + 用户插件缓存，三方合并去重。
+    app 内置（与 WorkBuddy 实际加载同源，2026-10-26 审计补）：
+      · workbuddy-builtin/skills 直系
+      · workbuddy-builtin/builtin-plugins/<plugin>/skills（calendar/private-docs 等）
+      · <org>/<plugin>/<latest>/skills（含 codebuddy-plugins-official）
+    插件缓存：~/.workbuddy/plugins/cache/<org>/<plugin>/<latest>/skills。
     环境变量 LJC_SKILLS_DIRS（冒号分隔）可完全覆盖默认列表。"""
     env = os.environ.get("LJC_SKILLS_DIRS")
     if env:
         return [os.path.expanduser(p) for p in env.split(":") if p.strip()]
     roots = [SKILLS_DIR]
-    builtin = ("/Applications/WorkBuddy.app/Contents/Resources/app.asar.unpacked/"
-               "resources/plugins/workbuddy-builtin/skills")
+    app_plugins = ("/Applications/WorkBuddy.app/Contents/Resources/app.asar.unpacked/"
+                   "resources/plugins")
+    builtin = os.path.join(app_plugins, "workbuddy-builtin", "skills")
     if os.path.isdir(builtin):
         roots.append(builtin)
-    cache = os.path.expanduser("~/.workbuddy/plugins/cache")
-    if os.path.isdir(cache):
-        for org in sorted(os.listdir(cache)):
-            org_dir = os.path.join(cache, org)
-            if not os.path.isdir(org_dir):
-                continue
-            for plugin in sorted(os.listdir(org_dir)):
-                plugin_dir = os.path.join(org_dir, plugin)
-                if not os.path.isdir(plugin_dir):
-                    continue
-                versions = [v for v in os.listdir(plugin_dir)
-                            if os.path.isdir(os.path.join(plugin_dir, v, "skills"))]
-                if not versions:
-                    continue
-                latest = pick_latest_version(versions, plugin_dir)
-                roots.append(os.path.join(plugin_dir, latest, "skills"))
-    return roots
+    bp = os.path.join(app_plugins, "workbuddy-builtin", "builtin-plugins")
+    if os.path.isdir(bp):
+        for plugin in sorted(os.listdir(bp)):
+            sk = os.path.join(bp, plugin, "skills")
+            if os.path.isdir(sk):
+                roots.append(sk)
+    roots.extend(_plugin_skills_roots(app_plugins))
+    roots.extend(_plugin_skills_roots(os.path.expanduser("~/.workbuddy/plugins/cache")))
+    return _dedupe_roots(roots)
 
 
 def build_index(quiet=False):
@@ -1212,21 +1244,41 @@ def cmd_query(query, top=10, as_json=False):
     print_hidden()
 
 
+def _roots_signature(roots):
+    """roots 的 realpath 有序签名——检测「扫描根集合/版本变化」。
+    app 更新加 builtin-plugins 层、cache 升级 5.8.3→5.9.2 都会改变 root 路径，
+    旧实现只比对 mtime，对这些完全不触发（2026-10-26 审计的根因之一）。"""
+    return tuple(os.path.realpath(r) for r in roots)
+
+
+def _newest_mtime(roots):
+    """所有 root 下子项的最新 mtime——兜底检测「同一 root 内新增/删除技能」。"""
+    newest = 0
+    for r in roots:
+        if not os.path.isdir(r):
+            continue
+        try:
+            newest = max(newest, max(
+                os.path.getmtime(os.path.join(r, n)) for n in os.listdir(r)))
+        except (OSError, ValueError):
+            continue
+    return newest
+
+
 def ensure_fresh_index(index):
-    """索引过期（任一扫描根比 built_at 新 5 秒以上）时自动重建——自愈而非提醒。
-    built_at 精确到秒、阈值 5 秒：分钟精度曾导致『目录创建于重建后 57 秒』
-    这种差值被 60 秒阈值卡死、自愈永不触发的 bug（2026-10-26 实测）。
-    177 个技能全量重建 <1 秒，自动重建比 launchd 监听更简单可靠。
-    返回（可能已重建的）index。"""
+    """索引与当前磁盘不一致时自动重建——自愈而非提醒。
+    双判据（2026-10-26 审计重构）：
+      ① roots 签名变化（default_roots() vs index['roots']）——抓 app 更新/版本升级；
+      ② 任一 root 子项 mtime 比 built_at 新 5 秒——兜底抓同 root 内增删技能。
+    旧实现只靠②，对「安装包时间戳早于上次 build 但内容是后来加入」的技能
+    永不触发，导致 workbuddy-pdf / mini-program-development / builtin-plugins
+    层长期缺席索引。两判据都只在变化时触发；无变化时稳定相等，不重复重建。"""
     import time as _t
     try:
-        roots = index.get("roots") or [SKILLS_DIR]
-        newest = 0
-        for root in roots:
-            if not os.path.isdir(root):
-                continue
-            newest = max(newest, max(
-                os.path.getmtime(os.path.join(root, n)) for n in os.listdir(root)))
+        cur_roots = default_roots()
+        if _roots_signature(cur_roots) != _roots_signature(index.get("roots", [])):
+            print("ℹ️ 扫描根发生变化，自动重建索引…")
+            return build_index(quiet=True)
         built = 0
         for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%d %H:%M"):
             try:
@@ -1234,8 +1286,8 @@ def ensure_fresh_index(index):
                 break
             except ValueError:
                 continue
-        if newest - built > 5:
-            print("ℹ️ 索引已过期，自动重建…")
+        if _newest_mtime(cur_roots) - built > 5:
+            print("ℹ️ 检测到技能目录变动，自动重建索引…")
             return build_index(quiet=True)
     except Exception:
         pass

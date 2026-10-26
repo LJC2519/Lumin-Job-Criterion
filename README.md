@@ -24,6 +24,7 @@ python3 scripts/find.py query "convert word documents" --top 8   # search instal
 python3 scripts/find.py suggest "your task description"          # relevant vs not-needed audit
 python3 scripts/github_search.py "skill router"                  # GitHub repo radar
 python3 scripts/github_search.py "diagram" --catalog             # four skill catalogs
+python3 scripts/web_search.py "convert pdf to word"              # web-wide semantic search (Tavily)
 python3 scripts/security_check.py <path-or-owner/repo>           # BLOCK/WARN/PASS gate
 python3 scripts/check_updates.py                                 # update detection
 python3 scripts/find.py doctor                                   # self health check
@@ -51,11 +52,12 @@ LJC 把「找技能」从碰运气变成流水线：
 
 - **模块化分解**：大任务拆成 L1 模块 + L2 小任务，每个小任务带产出物、可验证的完成标准、依赖标注
 - **四路检索**：本地索引（秒回）+ GitHub 仓库雷达（按星扫库）+ 四个技能目录（2 个社区 awesome + anthropics/skills 与 claude-plugins-official 两个官方仓库）+ SkillsMP MCP（接入即用，覆盖面最广）
+- **全网语义搜索（Tavily，可选）**：设了 `TAVILY_API_KEY` 后，`web_search.py` 走开放互联网按任务语义找技能——AI 原生语义引擎，服务端已排序，天然语义，能捞到还没进任何目录的新技能；未设 key 自动跳过
 - **安全门**：每个候选推荐前过 BLOCK / WARN / PASS 三档检查——管道执行远程脚本、编码载荷、提示词注入、凭证泄漏一律 BLOCK
 - **任务盘点**：`suggest` 分出「任务相关」与「本次用不到」，停不停、停哪些你说了算
 - **未注册挑明**：下载了但被作者禁用模型调用的技能，指出「下载了，但没有注册」+ 照样介绍功能 + 给开放路径
 - **双层语义**：词袋（内置 TF-IDF / 模糊匹配 / 130+ 中英术语映射）+ **可选向量后端**（软依赖：环境里装了 `sentence-transformers` / `fastembed` / `openai` 或自备嵌入命令就自动启用，没装静默回退）
-- **纯标准库**：零依赖，clone 即用；`LJC_SKILLS_DIR` / `GITHUB_TOKEN` / `LJC_CACHE_DIR` 可配
+- **纯标准库**：零依赖，clone 即用；`LJC_SKILLS_DIR` / `GITHUB_TOKEN` / `LJC_CACHE_DIR` / `TAVILY_API_KEY` 可配
 - **可发布可分发**：SKILL.md 标准格式，任何兼容客户端都能用；脚本也可脱离技能框架单独跑
 
 ## 安装
