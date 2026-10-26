@@ -97,18 +97,91 @@ def expand_terms(query):
         return [query]
 
 
-def search_repos(query, limit=8):
+def build_queries(query, skill_only=False):
+    """构造 GitHub 搜索查询：优先「去通用词后的多主题 OR」单条查询（一次请求覆盖多主题，
+    避免 AND 语义把结果打成空集），再给出逐词兜底组。
+
+    2026-10-27 实测修的三个缺陷：
+      ① AND 语义——旧实现把全部扩展词 + 硬编码 ' skill' 拼成一条长查询，
+         多词查询（"openwebui cline roo code …"）直接返回空集；
+      ② 硬编码 ' skill' 把「可借鉴的开源项目」排除在外（项目名里没有 skill）；
+      ③ 通用词（agent/plugin/code/tool/workbench…）稀释主题，命中 mysql-workbench
+         这类同名不同物的噪声 → 通用词直接剔除，只留主题词。
+    """
+    generic = {
+        "ai", "agent", "agents", "tool", "tools", "code", "coding", "app", "apps",
+        "cli", "framework", "frameworks", "chat", "assistant", "openai", "gpt", "llm",
+        "mcp", "plugin", "plugins", "skill", "skills", "server", "client", "sdk", "api",
+        "project", "projects", "dev", "developer", "developers", "best", "top", "free",
+        "new", "use", "using", "with", "and", "for", "the", "of", "to", "in", "on", "a",
+        "an", "python", "javascript", "typescript", "open", "source", "self", "hosted",
+        "workbench", "system", "model", "models", "application", "software", "program",
+    }
+    raw = [t for t in re.split(r"[\s,;、，/]+", query) if t]
     terms = expand_terms(query)
-    # GitHub 对中文检索效果差，优先用扩展出的英文词；最多取 3 个 + skill
-    en_terms = [t for t in terms if t.isascii() and " " not in t][:3] or terms[:2]
-    if en_terms and all(not t.isascii() for t in en_terms):
-        print("  ⚠ 检索词非 ASCII——GitHub 搜索对中文效果很差，建议先想好英文关键词")
-    q = " ".join(en_terms) + " skill"
-    url = ("https://api.github.com/search/repositories?q="
-           + urllib.parse.quote(q)
-           + f"&sort=stars&order=desc&per_page={limit}")
-    print(f"GitHub 仓库搜索「{q}」…")
-    ok, data, extra = api_get(url)
+    cands = []
+    for t in raw + terms:
+        t = t.strip().lower()
+        if len(t) < 3 or t in generic:
+            continue
+        if " " in t and len(t.split()) > 3:
+            continue          # 长句=AND 短语，天然过窄，剔除（实测是噪声主因）
+        if t not in cands:
+            cands.append(t)
+        if "-" in t:         # open-webui → 也试 openwebui（GitHub 检索按词切分连字符）
+            alt = t.replace("-", "")
+            if len(alt) >= 3 and alt not in generic and alt not in cands:
+                cands.append(alt)
+    # 复合词（含 -/_/空格）更具体，排前面；其余按长度降序
+    cands.sort(key=lambda x: (0 if ("-" in x or "_" in x or " " in x) else 1, -len(x)))
+    picked = cands[:5]
+    if not picked:
+        picked = [query.strip()]
+    main = " OR ".join(picked)
+    if skill_only:
+        main = f"({main}) skill"
+    groups = []
+    # A 组：原查询整句（AND 精准）——单主题查询命中率最高（如 claude token optimizer）
+    whole = query.strip()
+    if whole and len(whole.split()) >= 2:
+        groups.append(whole + (" skill" if skill_only else ""))
+    # B 组：去通用词的多主题 OR（宽召回，防 A 组空集）
+    groups.append(main)
+    # C 组：逐词兜底
+    for t in picked[:2]:
+        q = (t + " skill") if skill_only else t
+        if q not in groups:
+            groups.append(q)
+    return groups
+
+
+def local_relevance(item, groups):
+    """名称/描述命中查询词数——缓解 GitHub 纯按星排序造成的相关性差。"""
+    name = (item.get("name") or "").lower()
+    desc = (item.get("description") or "").lower()
+    score = 0
+    for g in groups:
+        for w in g.split():
+            if w in name:
+                score += 3
+            elif w in desc:
+                score += 1
+    return score
+
+
+def search_repos(query, limit=8, skill_only=False):
+    groups = build_queries(query, skill_only)
+    print(f"GitHub 仓库搜索「{groups[0]}」＋「{groups[1] if len(groups) > 1 else ''}」"
+          f"（双查合并：整句 AND 精准 + 多主题 OR 宽召回）…")
+    items = {}
+
+    def _run(g):
+        url = ("https://api.github.com/search/repositories?q="
+               + urllib.parse.quote(g)
+               + f"&sort=stars&order=desc&per_page={max(limit * 3, 12)}")
+        return api_get(url)
+
+    ok, data, extra = _run(groups[0])
     if not ok:
         if extra.get("retry_after") is not None:
             print(f"  ✗ 触发 GitHub 未认证搜索限额（10 次/分），约 {extra['retry_after']} 秒后恢复。")
@@ -116,19 +189,39 @@ def search_repos(query, limit=8):
         else:
             print(f"  ✗ 搜索失败：{data}")
         return []
-    items = data.get("items", [])
+    for it in data.get("items", []):
+        items.setdefault(it["full_name"], it)
+    for g in groups[1:2]:
+        ok2, d2, _e = _run(g)
+        if not ok2:
+            continue
+        for it in d2.get("items", []):
+            items.setdefault(it["full_name"], it)
+    if not items:
+        for g in groups[2:]:
+            ok2, d2, _e = _run(g)
+            if not ok2:
+                continue
+            for it in d2.get("items", []):
+                items.setdefault(it["full_name"], it)
+            if items:
+                break
     if not items:
         print("  （无仓库命中）")
         return []
-    print(f"  → 命中 {len(items)} 个仓库（按星排序）：\n")
-    for i, r in enumerate(items, 1):
+    ranked = sorted(items.values(),
+                    key=lambda it: (-local_relevance(it, groups),
+                                    -it.get("stargazers_count", 0)))
+    print(f"  → 命中 {len(items)} 个仓库（本地相关性 + 星数重排）：\n")
+    for i, r in enumerate(ranked[:limit], 1):
         desc = (r.get("description") or "（无描述）")
         if len(desc) > 110:
             desc = desc[:110] + "…"
-        print(f" {i:2d}. [{r['full_name']}]  ★{r.get('stargazers_count', 0)}")
+        rel = local_relevance(r, groups)
+        print(f" {i:2d}. [{r['full_name']}]  ★{r.get('stargazers_count', 0)}  相关度:{rel}")
         print(f"     {desc}")
         print(f"     {r.get('html_url')}\n")
-    return items
+    return ranked[:limit]
 
 
 def fetch_catalog(cat, refresh=False):
@@ -340,6 +433,7 @@ def main():
     mode = "repo"
     limit = 8
     refresh = False
+    skill_only = False
     query_parts = []
     i = 0
     while i < len(args):
@@ -351,6 +445,8 @@ def main():
         elif a == "--mode":
             i += 1
             mode = args[i] if i < len(args) else "repo"
+        elif a == "--skill-only":
+            skill_only = True
         elif a == "--limit":
             i += 1
             try:
@@ -367,7 +463,7 @@ def main():
     tok_note = "已用 GITHUB_TOKEN（高限额）" if token() else "未认证（限额较低，可设 GITHUB_TOKEN）"
     print(f"LJC · GitHub 通道（{tok_note}）\n")
     if mode in ("repo", "both"):
-        search_repos(query, limit)
+        search_repos(query, limit, skill_only)
         if mode == "both":
             print()
     if mode in ("catalog", "both"):
