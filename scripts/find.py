@@ -48,7 +48,7 @@ EMBED_CACHE_PATH = os.path.abspath(os.path.join(
 #   · 但如果你环境里**已经装了**嵌入能力，就自动用上（真语义召回）；
 #   · 没装 → 静默回退 TF-IDF 词袋，行为与今天完全一致，零报错、零依赖。
 # 环境变量（全部可选）：
-#   LJC_SEMANTIC=auto|off|local|cloud|external  默认 auto
+#   LJC_SEMANTIC=auto|on|off|local|cloud|external  默认 off（=auto 开启；ROI 实测后收紧）
 #   LJC_SEMANTIC_MODEL=...                       覆盖默认模型名
 #   LJC_SEMANTIC_CMD="..."                       外部嵌入命令：stdin 收 JSON 字符串数组，
 #                                                stdout 吐 JSON 二维数组（每行一个向量）
@@ -71,6 +71,11 @@ EMBED_CACHE_PATH = os.path.abspath(os.path.join(
 # 说明：技能的 description 绝大多数是英文；用户用中文提问时，
 # 靠这张表把中文查询扩展成可匹配英文描述的检索词。
 ZH_TO_EN = {
+    "拆分": ["分解", "decompose", "breakdown", "split"],
+    "拆成": ["分解", "decompose", "breakdown", "to-tickets"],
+    "拆解": ["分解", "decompose", "breakdown"],
+    "分解": ["decompose", "breakdown", "subtask"],
+    "小任务": ["subtask", "to-tickets", "ticket", "分解"],
     "爬虫": ["scraping", "scrape", "crawl", "fetch", "spider"],
     "抓取": ["scraping", "scrape", "fetch", "extract", "download"],
     "抓网页": ["scraping", "fetch", "web"],
@@ -396,12 +401,18 @@ def build_index(quiet=False):
     return index
 
 
-def load_index():
-    path = os.path.abspath(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "index.json"))
-    if not os.path.isfile(path):
-        print("索引不存在，先跑 build", file=sys.stderr)
-        sys.exit(2)
-    with open(path, encoding="utf-8") as f:
+def load_index(path=None, build_if_missing=True):
+    p = path or os.path.abspath(
+        os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "index.json"))
+    if not os.path.isfile(p):
+        # index.json 在 .gitignore 里（构建产物因机器而异）→ 新 clone 必缺。
+        # 缺失与过期不同：过期走自动重建，缺失就直接现场建一次（<1 秒），
+        # 不能打印一句「先跑 build」就把用户晾在退出码 2 上（2026-10-26 复盘）。
+        if not build_if_missing:
+            raise FileNotFoundError(p)
+        print("ℹ️ 索引不存在（首次使用），自动构建…", file=sys.stderr)
+        return build_index(quiet=True)
+    with open(p, encoding="utf-8") as f:
         return json.load(f)
 
 
@@ -690,9 +701,16 @@ def detect_semantic_backend(env=None, spec_fn=None):
     """探测可用的语义后端；探测不到返回 None（调用方回退词袋）。
     任何异常都被吞掉——语义是增强项，绝不能让它拖垮检索主流程。"""
     env = os.environ if env is None else env
-    mode = (env.get("LJC_SEMANTIC") or "auto").strip().lower()
+    # 2026-10-26 ROI 复盘后默认 off：22 条评估仅救回 1 条（还带 1 条错误答案），
+    # 首次模型加载 19.5s ≈ 全部评估耗时之和的 99%。词袋 + 术语映射已覆盖大多数场景。
+    # 想开真语义：export LJC_SEMANTIC=auto（on 是别名）。
+    mode = (env.get("LJC_SEMANTIC") or "off").strip().lower()
+    if mode == "on":
+        mode = "auto"
     if mode in ("off", "0", "no", "false", "never"):
-        return None, "已用 LJC_SEMANTIC=off 关闭"
+        if env.get("LJC_SEMANTIC"):
+            return None, "已用 LJC_SEMANTIC=off 显式关闭"
+        return None, "默认关闭（2026-10-26 实测 ROI 为负；LJC_SEMANTIC=auto 可开启）"
     model_override = (env.get("LJC_SEMANTIC_MODEL") or "").strip() or None
     cmd = (env.get("LJC_SEMANTIC_CMD") or "").strip()
     tried = []
@@ -798,7 +816,9 @@ def maybe_reexec(cmds=("query", "suggest", "semantic"), needed=True):
         return
     if len(sys.argv) < 2 or sys.argv[1] not in cmds:
         return
-    if os.environ.get("LJC_NO_REEXEC") or os.environ.get("LJC_SEMANTIC") == "off":
+    # 语义默认关闭（ROI 实测），换解释器是为语义后端服务的——关着就绝不换。
+    _mode = (os.environ.get("LJC_SEMANTIC") or "off").strip().lower()
+    if os.environ.get("LJC_NO_REEXEC") or _mode in ("off", "0", "no", "false", "never"):
         return
     try:
         if detect_semantic_backend()[0] is not None:
@@ -1359,7 +1379,8 @@ def cmd_semantic(clear_cache=False):
         print("   2) 本机模型：pip install fastembed               （更轻，onnxruntime 推理）")
         print("   3) 外部命令：export LJC_SEMANTIC_CMD='你的嵌入命令'  "
               "（stdin 收 JSON 字符串数组，stdout 吐 JSON 二维数组）")
-        print("\n 关闭探测：export LJC_SEMANTIC=off   指定模型：export LJC_SEMANTIC_MODEL=...")
+        print("\n 关闭探测：export LJC_SEMANTIC=off（已是默认）   "
+              "开启探测：export LJC_SEMANTIC=auto   指定模型：LJC_SEMANTIC_MODEL=...")
         return
     print(f" 状态：已启用 —— {backend['kind']} / {backend['name']}")
     print(f" 模型：{backend['model']}")

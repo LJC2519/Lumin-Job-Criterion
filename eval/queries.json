@@ -13,14 +13,17 @@
     "          后者等于用现状给自己打分，评估集就失效了。"
   ],
   "_known_debt": [
-    "v1 基线（2026-10-26）：top1 16/22，英文类最弱。剩余 6 条失败（9/11/14/16/21/22）",
-    "同源：查询里的通用词撞上了别家技能的 name（audit→security-audit、python→python-patterns、",
-    "docx/xlsx→docx、xlsx），而真正对的技能只在 desc 里出现域词（agreement/rebuttal）。",
-    "★ 已证伪的方案：IDF 降权。实测 audit 的 df 只有 9（权重 0.72），agreement 权重 1.0，",
+    "v2（2026-10-26 语义默认关后）：top1 16/22 与 v1 持平，但总耗时 19.7s → 0.1s（零模型加载），",
+    "且 #16 不再返回错误答案 wait-what（此前语义把它从「无答案」变成「错误答案」）。",
+    "剩余 6 条失败（9/11/14/16/21/22）两类根因：",
+    "① 通用词撞别家技能 name（audit→security-audit、python→python-patterns、docx/xlsx→docx/xlsx），",
+    "  而真正对的技能只在 desc 里出现域词（agreement/rebuttal）。",
+    "  ★ 已证伪的方案：IDF 降权。audit 的 df 只有 9（权重 0.72），agreement 权重 1.0，",
     "  加权后 security-audit 仍 40 分 vs contract-review 15 分 —— 根因是权重结构",
     "  （name 段落匹配 40 分 vs desc 15 分），不是词频。继续调词袋权重是无底洞。",
-    "★ 正解在别处：这属于「能力匹配」问题（关键词命中 ≠ 能干这活），交给宿主模型",
-    "  读候选 SKILL.md 原文做 rerank —— 见 SKILL.md 第 2 步的 rerank 循环。"
+    "② 域词缺口（#16 逐条回复→rebuttal、#22 扫描表格→sheetagent）：语义后端能捞回但",
+    "  准确率仅 50%（#16 给 wait-what），已随默认关闭一起下线；正解同①，都是 rerank。",
+    "★ 这 6 条的归宿：宿主模型读候选 SKILL.md 原文做 rerank（能力匹配），见 SKILL.md 第 2 步。"
   ],
   "cases": [
     {"id": 1, "query": "帮我找个能审合同的", "kind": "zh",
@@ -52,7 +55,7 @@
 
     {"id": 8, "query": "把一个大任务拆成小任务", "kind": "zh",
      "accept": ["ljc", "to-tickets", "to-spec"],
-     "note": "本技能自己的主责，必须能召回"},
+     "note": "本技能自己的主责，必须能召回。曾是语义后端唯一答对的用例（19.5s）；2026-10-26 补术语映射 拆成→分解/decompose 后词袋零成本命中，成为「语义 ROI 为负」结论的关键证据"},
 
     {"id": 9, "query": "audit an agreement before signing", "kind": "en",
      "accept": ["contract-review", "contract-review-pro"],

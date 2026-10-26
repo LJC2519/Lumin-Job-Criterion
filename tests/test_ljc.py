@@ -737,5 +737,82 @@ class TestEvalHarness(unittest.TestCase):
         self.assertEqual(run_eval.compare_rows(cur, base)["worse"], [1])
 
 
+class TestRoiFixes(unittest.TestCase):
+    """2026-10-26 ROI 复盘的三项修正：术语映射补「拆」系、索引缺失自动建、语义默认关。"""
+
+    def test_split_query_maps_to_decompose(self):
+        """「把一个大任务拆成小任务」必须扩出「分解/decompose」——
+        ROI 实测：语义后端在这条上花 19.5s 救回的命中，术语映射 1 行就能零成本拿到。"""
+        terms = find.expand_query("把一个大任务拆成小任务")
+        self.assertTrue(terms & {"分解", "decompose", "breakdown"},
+                        f"扩展词缺分解系同义: {sorted(terms)}")
+
+    def test_missing_index_builds_instead_of_exit(self):
+        """index.json 在 .gitignore 里 → 新 clone 必缺。缺失应现场自动构建，
+        而不是打印「先跑 build」然后退出码 2 把用户晾在那。"""
+        calls = []
+        orig = find.build_index
+        find.build_index = lambda quiet=False: calls.append(quiet) or {"skills": []}
+        try:
+            idx = find.load_index(path="/tmp/ljc-no-such-index-xyz.json")
+        finally:
+            find.build_index = orig
+        self.assertEqual(calls, [True])
+        self.assertEqual(idx, {"skills": []})
+
+    def test_semantic_default_off(self):
+        """默认不探测、不加载模型（ROI 实测：准确率 50%、耗时 ×200，不该让用户默认付）。"""
+        st, reason = find.detect_semantic_backend(env={})
+        self.assertIsNone(st)
+        self.assertIn("默认", reason)
+
+    def test_semantic_explicit_off_message(self):
+        st, reason = find.detect_semantic_backend(env={"LJC_SEMANTIC": "off"})
+        self.assertIsNone(st)
+        self.assertIn("off", reason)
+
+    def test_semantic_auto_still_enables(self):
+        """默认关 ≠ 只能关：显式 auto 必须仍然能探测（本机装了 ST，应返回后端）。"""
+        st, reason = find.detect_semantic_backend(env={"LJC_SEMANTIC": "auto"})
+        self.assertTrue(st is not None or (reason and "默认" not in reason),
+                        f"auto 应走探测分支，得到: {st}, {reason}")
+
+    def test_reexec_skipped_when_semantic_disabled(self):
+        """默认关闭时绝不能换解释器重启——那是为语义后端服务的脏活。"""
+        import unittest.mock as mock
+        old_env = dict(os.environ)
+        os.environ.pop("LJC_SEMANTIC", None)
+        os.environ.pop("LJC_NO_REEXEC", None)
+        try:
+            with mock.patch.object(find.sys, "argv", ["find.py", "query", "x"]), \
+                 mock.patch.object(find.os, "execve") as ex, \
+                 mock.patch.object(find, "detect_semantic_backend",
+                                   return_value=(None, "默认关闭")):
+                find.maybe_reexec()
+            ex.assert_not_called()
+        finally:
+            os.environ.clear()
+            os.environ.update(old_env)
+
+    def test_reexec_still_works_when_enabled(self):
+        """显式开启且本解释器没嵌入库时，换解释器的能力必须还在。"""
+        import unittest.mock as mock
+        old_env = dict(os.environ)
+        os.environ["LJC_SEMANTIC"] = "auto"
+        os.environ.pop("LJC_NO_REEXEC", None)
+        try:
+            with mock.patch.object(find.sys, "argv", ["find.py", "query", "x"]), \
+                 mock.patch.object(find.os, "execve") as ex, \
+                 mock.patch.object(find, "detect_semantic_backend",
+                                   return_value=(None, "本机无嵌入库")), \
+                 mock.patch.object(find, "find_semantic_python",
+                                   return_value="/usr/bin/true"):
+                find.maybe_reexec()
+            ex.assert_called_once()
+        finally:
+            os.environ.clear()
+            os.environ.update(old_env)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

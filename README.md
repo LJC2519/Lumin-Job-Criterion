@@ -136,7 +136,13 @@ python3 scripts/find.py semantic
 | 办法                 | 怎么开                                                                                                          | 代价                          |
 | ------------------ | ------------------------------------------------------------------------------------------------------------ | --------------------------- |
 | **宿主模型意译**（零依赖，默认靠它） | 检索前把任务意译成 3–5 组语义相同、措辞不同的查询（中英皆可），分别检索后合并去重——SKILL.md 已写进流程，立即生效                                             | 多跑几次检索，零安装                  |
-| **向量后端**（软依赖，自动探测）  | `pip install sentence-transformers`（或 `fastembed`）；也可 `export LJC_SEMANTIC_CMD='你的嵌入命令'`，或装 `openai` + 设 API KEY | 本机模型约 100MB–2GB；云端要联网、有隐私代价 |
+| **补术语映射**（零依赖，第一杠杆）  | 往 `scripts/ljc_terms.json` 加 `{"中文词": ["en1", "en2"]}`（内置 130+ 条，用户词优先于内置）                                      | 一行配置，秒级生效                   |
+| **向量后端**（软依赖，**默认关**）| `export LJC_SEMANTIC=auto` + `pip install sentence-transformers`（或 `fastembed` / `LJC_SEMANTIC_CMD` / openai+KEY） | 本机模型约 100MB–2GB；首次加载 10–15 秒 |
+
+> **为什么向量后端默认关（2026-10-26 评估集实测）**：22 条查询里只有 2 条轮到向量出手，
+> 对 1 错 1（准确率 50%），却贡献了 99% 的耗时（首次加载模型 19.5 秒 ≈ 200 倍于纯词袋）；
+> 唯一答对的那条，补一条术语映射就能零成本命中；另一条则从「无答案」变成「错误答案」——
+> 错误答案比没有答案更害人。代码与缓存全部保留，`LJC_SEMANTIC=auto` 随时可开。
 
 设计取舍：**`find.py` 永不 import 任何第三方库**——用了 `importlib.util.find_spec` 探测，
 探测到才加载；探测不到、或加载/调用失败，一律**静默回退词袋**，绝不报错、绝不影响主流程。
@@ -162,7 +168,7 @@ python3 scripts/find.py semantic
 脚本按模型名自动加，不用手工配。换模型：`export LJC_SEMANTIC_MODEL=...`。
 
 向量结果按索引指纹缓存到 `scripts/.cache/embeddings.json`（技能集合或索引一变就作废重算）。
-自检：`python3 scripts/find.py semantic`；关闭：`export LJC_SEMANTIC=off`。
+自检：`python3 scripts/find.py semantic`；开启：`export LJC_SEMANTIC=auto`；关闭（默认）：`export LJC_SEMANTIC=off`。
 
 > **跨解释器重启**：脚本可能是被「没装嵌入库的那个 python」跑的（技能里写的就是通用
 > `python3`），而按隔离惯例包装在 venv 里。探测不到时，`find.py` 会去找别处装了嵌入库的
@@ -261,7 +267,7 @@ lumin-job-criterion/
 | `LJC_SKILLS_DIRS`          | 完全自定义扫描根列表（冒号分隔，覆盖默认）         | 无                     |
 | `GITHUB_TOKEN`             | GitHub API 认证（提高限额）           | 无（未认证）                |
 | `LJC_CACHE_DIR`            | 技能目录缓存位置                      | 脚本旁 `.cache/`         |
-| `LJC_SEMANTIC`             | 语义后端开关：`auto`/`off`/`local`/`cloud`/`external` | `auto`（探测不到即回退词袋） |
+| `LJC_SEMANTIC`             | 语义后端开关：`auto`/`on`/`off`/`local`/`cloud`/`external` | `off`（默认关；实测 ROI 为负，见下） |
 | `LJC_SEMANTIC_MODEL`       | 覆盖嵌入模型名                       | 各后端默认（多语言小模型）    |
 | `LJC_SEMANTIC_CMD`         | 自备嵌入命令（stdin 收 JSON 字符串数组，stdout 吐 JSON 二维数组） | 无         |
 | `LJC_SEMANTIC_PY`          | 指定装了嵌入库的解释器（跨解释器重启用）      | 自动找托管 venv      |
