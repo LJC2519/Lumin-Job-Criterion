@@ -1,6 +1,6 @@
 # Lumin Job Criterion (LJC)
 
-**任务技能路由器** —— 开始一个任务时，先把它模块化分解，本地与 GitHub 四路检索现成技能，过一道安全门，然后画出「任务 → 技能覆盖图」：每个技能解决哪一部分、哪里是缺口。
+**任务技能路由器** —— 开始一个任务时，先验料、再拆到原子级（L3 五要素），本地与 GitHub 四路检索现成技能与可借鉴开源项目，过「安全 × 适用」双审查门，然后画出「任务 → 技能覆盖图」（含子任务依赖连线）：每个技能解决哪一部分、哪里是缺口。
 
 > A task-to-skill router: decompose your task, sweep local + GitHub catalogs, gate on security, and draw the coverage map.
 
@@ -12,6 +12,8 @@
 ![Python 3.8+](https://img.shields.io/badge/python-3.8%2B-blue.svg)
 
 ![纯标准库](https://img.shields.io/badge/deps-zero-brightgreen.svg)
+
+📖 **[图文说明书（v2.2.0）](docs/manual-zh.html)** —— 五步流水线 / L3 五要素 / 三分类匹配 / 双审查门 / 覆盖图示例 / 命令速查，一页看全。
 
 ## English
 
@@ -41,7 +43,7 @@ python3 scripts/find.py doctor                                   # self health c
 LJC 把「找技能」从碰运气变成流水线：
 
 ```
-任务进来 → 模块化分解（L0→L1→L2）→ 四路检索 → 安全门 + 读原文核实 → 覆盖图 → 盘点建议
+任务进来 → 验料 → 拆分（L1→L2→L3，五要素）→ 四路检索（skills + 可借鉴开源项目）→ 双审查门（安全尺 × 适用尺）→ 覆盖图（含依赖连线）→ 盘点建议
 ```
 
 ![覆盖图示例](docs/coverage-example.svg)
@@ -58,6 +60,10 @@ LJC 把「找技能」从碰运气变成流水线：
 - **未注册挑明**：下载了但被作者禁用模型调用的技能，指出「下载了，但没有注册」+ 照样介绍功能 + 给开放路径
 - **双层语义**：词袋（内置 TF-IDF / 模糊匹配 / 130+ 中英术语映射）+ **可选向量后端**（软依赖：环境里装了 `sentence-transformers` / `fastembed` / `openai` 或自备嵌入命令就自动启用，没装静默回退）
 - **纯标准库**：零依赖，clone 即用；`LJC_SKILLS_DIR` / `GITHUB_TOKEN` / `LJC_CACHE_DIR` / `TAVILY_API_KEY` 可配
+- **验料前置 + 粒度过尺**（v2.2）：拆分前先挑战任务前提；L3 原子任务五要素（输入/输出/前置依赖/执行顺序/完成标准），粒度「一口气说得清」才算合格
+- **开源项目匹配**（v2.2）：不只有 skill——底层原理相似的开源项目也纳入推荐，必填「匹配理由 + 可借鉴点 + 改造要点」
+- **双审查门**（v2.2）：安全尺（BLOCK/WARN/PASS）× 适用尺（读原文核实 + rerank 判分），两把尺都过才推荐
+- **依赖覆盖图**（v2.2）：子任务间画依赖连线（①→②）、无依赖标「可并行」，照图就能排执行顺序
 - **可发布可分发**：SKILL.md 标准格式，任何兼容客户端都能用；脚本也可脱离技能框架单独跑
 
 ## 安装
