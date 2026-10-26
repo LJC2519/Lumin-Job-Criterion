@@ -51,7 +51,7 @@ KEYFILE="$HOME/.workbuddy/ljc/tavily.key"
 mkdir -p "$(dirname "$KEYFILE")"
 printf '%s' "$KEY" > "$KEYFILE"
 chmod 600 "$KEYFILE"
-echo "✅ 已写入本地密钥文件 $KEYFILE（权限 600，GUI 应用通道）"
+echo "✅ 已写入本地密钥文件 ${KEYFILE}（权限 600，GUI 应用通道）"
 
 echo
 echo "== 通道自检 =="
