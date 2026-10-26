@@ -44,7 +44,21 @@ CACHE_TTL = 6 * 3600  # 6 小时：网页结果新鲜度优先，但省 Tavily �
 
 
 def api_key():
-    return os.environ.get("TAVILY_API_KEY") or os.environ.get("TAVILY_KEY") or ""
+    """取 Tavily key：环境变量优先 → 本地密钥文件兜底。
+
+    2026-10-27 实测坑：WorkBuddy 是 macOS **GUI 应用**，GUI 进程不读 ~/.zshrc——
+    只把 key 写进 shell 配置的话，WorkBuddy 内部的调用拿不到它，通道等于没开。
+    故加文件通道：~/.workbuddy/ljc/tavily.key（0600），任何进程都能读到。
+    """
+    for name in ("TAVILY_API_KEY", "TAVILY_KEY"):
+        v = os.environ.get(name)
+        if v and v.strip():
+            return v.strip()
+    try:
+        with open(os.path.expanduser("~/.workbuddy/ljc/tavily.key"), encoding="utf-8") as f:
+            return f.read().strip()
+    except OSError:
+        return ""
 
 
 def cache_dir():

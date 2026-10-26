@@ -169,7 +169,7 @@ right-sizing 模式后强化；不满足就继续拆或合并）：
 | 本地索引（`find.py`） | ✅ 永远可用 | 无 | 秒回；索引与磁盘不一致会自动重建 |
 | GitHub 仓库雷达 | ✅ 需网络 | `GITHUB_TOKEN` 可选（提高限额） | 多词查询按**分组 OR** 搜 + 本地相关性重排；只想搜技能仓库加 `--skill-only` |
 | GitHub 技能目录（`--catalog`） | ✅ 需网络 | 同上 | 首次抓取有请求数成本，之后缓存 7 天 |
-| 全网语义（Tavily） | ❌ **默认关闭** | `TAVILY_API_KEY`（app.tavily.com 注册免费） | 未设 key 自动跳过，不影响其他路 |
+| 全网语义（Tavily） | ❌ **默认关闭** | `TAVILY_API_KEY`（app.tavily.com 注册免费） | key 存两处：`~/.zshrc`（命令行用）+ `~/.workbuddy/ljc/tavily.key`（**GUI 应用读不到 .zshrc，必须有文件通道**）；未设 key 自动跳过 |
 | 技能市场（`search_and_install_skills`） | ✅ | 无 | **必须用描述性关键词搜**（拿技能名搜返回空）；`install` 前须紧跟一次 `search` |
 
 > Tavily 一键启用：注册后 `bash scripts/setup_tavily.sh <tvly-...key>`（写入 ~/.zshrc + 校验 + 实跑一次）。

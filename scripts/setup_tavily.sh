@@ -42,8 +42,16 @@ else
   echo "✅ 已写入 ~/.zshrc"
 fi
 
-# 仅本进程生效（当前 shell 立即可用）
+# 同一进程立即生效
 export TAVILY_API_KEY="$KEY"
+
+# 本地密钥文件通道（关键）：WorkBuddy 是 macOS GUI 应用，不读 ~/.zshrc，
+# GUI 内的调用只能靠这个文件拿到 key → 权限 600，只本人可读
+KEYFILE="$HOME/.workbuddy/ljc/tavily.key"
+mkdir -p "$(dirname "$KEYFILE")"
+printf '%s' "$KEY" > "$KEYFILE"
+chmod 600 "$KEYFILE"
+echo "✅ 已写入本地密钥文件 $KEYFILE（权限 600，GUI 应用通道）"
 
 echo
 echo "== 通道自检 =="
