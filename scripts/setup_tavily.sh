@@ -7,9 +7,19 @@ set -euo pipefail
 LJC="${LJC_DIR:-$HOME/.workbuddy/skills/lumin-job-criterion}"
 KEY="${1:-}"
 
+# --clipboard（或不传参）：从剪贴板读取——key 不经过对话、不进命令行历史
+if [ "$KEY" = "--clipboard" ] || [ -z "$KEY" ]; then
+  KEY="$(pbpaste 2>/dev/null || true)"
+  if [ -n "$KEY" ]; then
+    echo "ℹ️ 已从剪贴板读取 key（长度 ${#KEY}，不回显内容）"
+  fi
+fi
+
 if [ -z "$KEY" ]; then
-  echo "用法: bash setup_tavily.sh <你的 tvly-... key>"
-  echo "key 获取：https://app.tavily.com → 注册 → Dashboard → API Keys"
+  echo "用法："
+  echo "  bash setup_tavily.sh --clipboard      # 从剪贴板读（推荐，key 不落对话）"
+  echo "  bash setup_tavily.sh tvly-xxxx       # 直接传参"
+  echo "key 获取：https://app.tavily.com → 注册 → Dashboard → API Keys → 点复制图标"
   exit 1
 fi
 
