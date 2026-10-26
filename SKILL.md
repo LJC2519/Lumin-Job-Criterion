@@ -2,7 +2,7 @@
 name: ljc
 description: LJC（Lumin Job Criterion，任务技能路由器）· 触发语句：「请ljc为我指点迷津」「用 LJC 找技能：<任务>」「让 LJC 路由这个任务」（LJC/ljc 大小写均可）。注意：这是调用本技能的指令、不是对助手本人说的话——用户消息里出现 ljc / LJC / lumin-job-criterion，或说「请ljc为我指点迷津」「用 LJC 找技能」时，都应立即用 Skill 工具加载本技能。开始一个任务时：模块化分解（L0→L1→L2）→本地索引、GitHub 仓库雷达、GitHub 技能目录三路检索（可经 SkillsMP MCP 连接器扩大覆盖面）→过安全检查→读原文核实→画出「任务→技能覆盖图」，告诉你每个技能解决哪一部分、哪里是缺口。还可按任务盘点：哪些技能相关有用、哪些本次用不到（可暂时关掉，停用需同意）。也可在接到多步骤复杂任务时自动进入路由。直接检索模式：「有没有技能能做X」「已装的技能里有什么」「find a skill for X」——本地秒回，查不到转 GitHub 或官方 find-skills 搜市场。Decomposition refines to atomic L3 tasks (input/output/deps/order/done-criteria); skill matching is wide-scope with three adaptation classes (direct use / adapt / reference) plus adaptation notes.
 description_zh: "Lumin Job Criterion（LJC）· 任务技能路由器。触发语句「请ljc为我指点迷津」（大小写均可）。注意：这是调用本技能的指令，不是对助手说的话——用户提到 LJC / ljc / lumin-job-criterion / 「用 LJC 找技能」「让 LJC 路由任务」时同样加载本技能。流程：① 把大任务模块化分解成 L1 模块 + L2 小任务（每个带产出物/完成标准/依赖）② 三路检索：本地索引 + GitHub 仓库雷达与技能目录 + SkillsMP MCP（若接入）③ 每个候选过安全检查（BLOCK/WARN/PASS）再读原文核实 ④ 画覆盖图：每个技能解决哪一部分、哪块是缺口。另支持任务盘点（find.py suggest）：相关有用 vs 本次用不到（可暂时关掉，停用需用户同意）。零命中不硬凑。与官方 find-skills 互补——本技能管『这个任务用什么技能』，find-skills 管『市场上还有什么』。任务拆解细化到 L3 原子任务（输入/输出/前置依赖/执行顺序/完成标准）；技能匹配宽口径三分类（直接使用/改造适配/思路参考，附改造要点）。"
-version: 2.0.0
+version: 2.1.0
 allowed-tools: Read,Bash,Grep,Skill
 ---
 
@@ -94,8 +94,8 @@ right-sizing 模式后强化；不满足就继续拆或合并）：
 > 下文命令中的 `<LJC>` = 本技能安装目录（默认 `~/.workbuddy/skills/lumin-job-criterion`，
 > 装在别处换成实际路径即可；被检索的技能目录可用环境变量 `LJC_SKILLS_DIR` 覆盖）。
 
-- **本地已装**（秒回、零网络；索引覆盖用户技能 + WorkBuddy 内置技能 +
-  插件缓存技能）：
+- **本地已装**（秒回、零网络；索引覆盖用户技能 + WorkBuddy 内置技能
+  （含 builtin-plugins 子层与带版本插件）+ 插件缓存技能）：
   ```bash
   python3 <LJC>/scripts/find.py query "<子任务领域词>" --top 8
   ```
@@ -325,9 +325,10 @@ python3 <LJC>/scripts/find.py query "<用户的原话>" --top 5
    改之后 `--compare eval/baseline_v1.json`。**别信「感觉变好了」**：
    对比结果里「两次都通过」的用例不能证明任何改进，「两次都失败」的才是真欠账。
    用例只能按「人判断的正确答案」填，不能按「当前工具返回什么」填
-8. **索引自愈**：`query`/`suggest`/`stats` 发现索引**缺失或过期**都会自动构建/重建
-   （<1 秒，秒级 built_at + 5 秒阈值），无需手动——index.json 在 .gitignore 里，
-   新 clone 第一次跑就自动建；也可主动 `build`
+8. **索引自愈**：`query`/`suggest`/`stats` 发现索引**缺失或与磁盘不一致**都会自动
+   重建（<1 秒；双判据=roots 签名变化 + mtime 兜底，2026-10-26 重构——旧纯 mtime
+   判定对「安装包时间戳早于上次 build 但内容后加入」的技能永不触发），无需手动——
+   index.json 在 .gitignore 里，新 clone 第一次跑就自动建；也可主动 `build`
 9. **安全门=如实说明，不代否决**：任何候选推荐前必须过 `security_check.py`；
    发现问题逐条向用户说明（含 BLOCK 高危项也要挑明存在与风险），
    用不用由用户定夺，不许静默跳过，也不许静默否决

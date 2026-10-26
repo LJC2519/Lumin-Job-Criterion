@@ -278,7 +278,7 @@ lumin-job-criterion/
 | `scripts/ljc_sources.json` | tarball 来源登记（复制示例文件创建，git 忽略） | 无                     |
 
 索引扫描是**多根**的：用户技能目录 + WorkBuddy 内置技能  
-（/Applications/…/workbuddy-builtin/skills，存在即自动纳入）+ 插件缓存  
+（/Applications/…/workbuddy-builtin/skills 直系 + builtin-plugins 子层 + 带版本插件，存在即自动纳入）+ 插件缓存  
 （`~/.workbuddy/plugins/cache`，同插件多版本只取最新版，同名技能先到的根优先）。
 
 ## 测试
