@@ -13,17 +13,14 @@
     "          后者等于用现状给自己打分，评估集就失效了。"
   ],
   "_known_debt": [
-    "v2（2026-10-26 语义默认关后）：top1 16/22 与 v1 持平，但总耗时 19.7s → 0.1s（零模型加载），",
-    "且 #16 不再返回错误答案 wait-what（此前语义把它从「无答案」变成「错误答案」）。",
-    "剩余 6 条失败（9/11/14/16/21/22）两类根因：",
-    "① 通用词撞别家技能 name（audit→security-audit、python→python-patterns、docx/xlsx→docx/xlsx），",
-    "  而真正对的技能只在 desc 里出现域词（agreement/rebuttal）。",
-    "  ★ 已证伪的方案：IDF 降权。audit 的 df 只有 9（权重 0.72），agreement 权重 1.0，",
-    "  加权后 security-audit 仍 40 分 vs contract-review 15 分 —— 根因是权重结构",
-    "  （name 段落匹配 40 分 vs desc 15 分），不是词频。继续调词袋权重是无底洞。",
-    "② 域词缺口（#16 逐条回复→rebuttal、#22 扫描表格→sheetagent）：语义后端能捞回但",
-    "  准确率仅 50%（#16 给 wait-what），已随默认关闭一起下线；正解同①，都是 rerank。",
-    "★ 这 6 条的归宿：宿主模型读候选 SKILL.md 原文做 rerank（能力匹配），见 SKILL.md 第 2 步。"
+    "v3（2026-10-26 rerank 落地后）：脚本层 top1 17/22（补「修改意见/条款」映射又修好 #16），",
+    "宿主 rerank 层 top1 20/22——#9/#11/#21 由宿主读原文判分救回（eval/rerank_judgments.json）。",
+    "剩余 2 条（#14/#22）是「库存缺口哨兵」：库里没有 OCR 提取扫描件表格的技能，",
+    "宿主如实判 <0.5，评估层按量尺保持失败——直到装上对口技能自动转正为验收用例。",
+    "已证伪并归档的方案：① IDF 降权（audit df 仅 9，加权后 security-audit 仍 40 vs 15 赢，",
+    "根因是权重结构不是词频）② 默认开语义（ROI 为负：22 条仅救回 1 条、耗时 ×200，",
+    "唯一答对那条被「拆成→分解」术语映射零成本替代）。",
+    "★ 方法论沉淀：先补术语映射（召回），再 rerank（能力匹配），两者都不行 = 库存缺口。"
   ],
   "cases": [
     {"id": 1, "query": "帮我找个能审合同的", "kind": "zh",
@@ -76,7 +73,7 @@
 
     {"id": 14, "query": "extract tables from a scanned document", "kind": "en",
      "accept": ["workbuddy-sheetagent"],
-     "note": "实测翻车点：paraphrase 给 printable-study-sheet（错）"},
+     "note": "★ 库存缺口哨兵：库内无 OCR 提取扫描件表格的技能（pdf 判 0.7 只算相关，sheetagent 要既有表格文件不算对口）。宿主 rerank 如实判 <0.5 也不该绿——这条保持失败直到装上真正对口的技能，装上后它自动转为验收用例"},
 
     {"id": 15, "query": "我想知道签这个合同会不会有坑", "kind": "oral",
      "accept": ["contract-review", "contract-review-pro"],
@@ -85,7 +82,7 @@
 
     {"id": 16, "query": "老师给的修改意见怎么逐条回复", "kind": "oral",
      "accept": ["light-review-rebuttal", "rebuttal-guidance"],
-     "note": "bge-m3 也失败过（给 printable-study-sheet）"},
+     "note": "2026-10-26 补术语映射 修改意见→rebuttal/feedback 后脚本层直接修复（rebuttal-guidance 161 分 top1）；此前 bge-m3 语义给 wait-what（错）"},
 
     {"id": 17, "query": "论文投稿前帮我检查一遍", "kind": "oral",
      "accept": ["pre-submission-reviewer", "light-typesetting", "paper-polish"],
@@ -107,6 +104,6 @@
     {"id": 22, "query": "扫描件里的表格能不能自动摘出来", "kind": "oral",
      "accept": ["workbuddy-sheetagent"],
      "must_not": ["printable-study-sheet"],
-     "note": "中文口语 + 跨语言，两个引擎都容易失败"}
+     "note": "★ 库存缺口哨兵（同 #14）：正确行为是宿主如实判边角(<0.5)并告知用户库里没有，而不是硬推一个沾边的。中文口语 + 跨语言，检索层也难"}
   ]
 }

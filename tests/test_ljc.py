@@ -814,5 +814,108 @@ class TestRoiFixes(unittest.TestCase):
             os.environ.update(old_env)
 
 
+class TestRerank(unittest.TestCase):
+    """rerank 落地：量尺、判分解析、回流重排、评估回流（判分由宿主模型打，机制归脚本）。"""
+
+    def setUp(self):
+        sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(
+            os.path.abspath(__file__))), "eval"))
+
+    def test_rubric_bins(self):
+        self.assertEqual(find.rubric_bin(1.0), "直接实现")
+        self.assertEqual(find.rubric_bin(0.8), "直接实现")
+        self.assertEqual(find.rubric_bin(0.79), "相关")
+        self.assertEqual(find.rubric_bin(0.5), "相关")
+        self.assertEqual(find.rubric_bin(0.49), "边角")
+        self.assertEqual(find.rubric_bin(0.2), "边角")
+        self.assertEqual(find.rubric_bin(0.19), "排除")
+
+    def test_parse_scores(self):
+        s, bad = find.parse_rerank_scores("a:0.9, b:0.5 ,c:1.5,d:-1,e:xx,f")
+        self.assertEqual(s, {"a": 0.9, "b": 0.5, "c": 1.0, "d": 0.0})
+        self.assertEqual(bad, ["e:xx", "f"])
+
+    def test_parse_scores_empty(self):
+        self.assertEqual(find.parse_rerank_scores(""), ({}, []))
+        self.assertEqual(find.parse_rerank_scores(None), ({}, []))
+
+    def test_merge_orders_by_host_score(self):
+        cands = [{"name": "a"}, {"name": "b"}, {"name": "c"}]
+        merged = find.merge_rerank(cands, {"c": 0.9, "a": 0.6})
+        self.assertEqual([(t, n) for t, n, _s, _e in merged],
+                         [("rerank", "c"), ("rerank", "a"), ("原序", "b")])
+        self.assertEqual(merged[0][2], 0.9)
+        self.assertIsNone(merged[2][2])
+
+    def test_merge_tie_breaks_by_name(self):
+        cands = [{"name": "z"}, {"name": "a"}]
+        merged = find.merge_rerank(cands, {"z": 0.9, "a": 0.9})
+        self.assertEqual([n for _t, n, _s, _e in merged], ["a", "z"])
+
+    def test_eval_apply_judgments(self):
+        import run_eval
+        row = {"id": 9, "kind": "en", "query": "q", "top1": "security-audit",
+               "top3": ["security-audit", "docx"], "hit1": False, "hit3": False,
+               "recall": False, "violated": [], "passed": False,
+               "elapsed_s": 0.0, "mode": "m", "accept": ["contract-review"],
+               "must_not": ["security-audit"]}
+        out = run_eval.apply_judgments([row], {"9": {"contract-review": 0.9,
+                                                     "security-audit": 0.3}})
+        r = out[0]
+        self.assertEqual(r["top1"], "contract-review")
+        self.assertTrue(r["hit1"])
+        self.assertTrue(r["passed"])
+        self.assertEqual(r["violated"], [])  # security-audit 被宿主压到 0.3 = 明确排除，不算误导
+
+    def test_eval_violation_when_host_endorses_must_not(self):
+        """宿主给已知错误答案 ≥0.5 或选成 top1 → 必须算违规（rerank 也救不了误导）。"""
+        import run_eval
+        row = {"id": 9, "kind": "en", "query": "q", "top1": "security-audit",
+               "top3": ["security-audit"], "hit1": False, "hit3": False,
+               "recall": False, "violated": [], "passed": False,
+               "elapsed_s": 0.0, "mode": "m", "accept": ["contract-review"],
+               "must_not": ["security-audit"]}
+        r = run_eval.apply_judgments(
+            [row], {"9": {"contract-review": 0.4, "security-audit": 0.6}})[0]
+        self.assertEqual(r["violated"], ["security-audit"])
+        self.assertFalse(r["passed"])
+
+    def test_eval_apply_judgments_excludes_low_from_top3(self):
+        import run_eval
+        row = {"id": 1, "kind": "zh", "query": "q", "top1": "x", "top3": ["x"],
+               "hit1": False, "hit3": False, "recall": False, "violated": [],
+               "passed": False, "elapsed_s": 0.0, "mode": "m",
+               "accept": ["good"], "must_not": []}
+        out = run_eval.apply_judgments(
+            [row], {"1": {"good": 0.85, "junk": 0.1, "meh": 0.3}})
+        r = out[0]
+        self.assertEqual(r["top1"], "good")
+        self.assertNotIn("junk", r["top3"])
+        self.assertIn("meh", r["top3"])
+
+    def test_eval_top1_below_rubric_line_fails(self):
+        """rerank 层：top1 判分 <0.5（量尺「相关」以下）= 库里其实没有能干的，
+        不许因为「它是最高分」就假通过——诚实无解也是评估结果。"""
+        import run_eval
+        row = {"id": 22, "kind": "oral", "query": "q", "top1": "xlsx",
+               "top3": ["xlsx"], "hit1": False, "hit3": False, "recall": False,
+               "violated": [], "passed": False, "elapsed_s": 0.0, "mode": "m",
+               "accept": ["workbuddy-sheetagent"], "must_not": []}
+        r = run_eval.apply_judgments(
+            [row], {"22": {"workbuddy-sheetagent": 0.35, "xlsx": 0.3}})[0]
+        self.assertEqual(r["top1"], "workbuddy-sheetagent")
+        self.assertFalse(r["hit1"])   # 0.35 < 0.5：判了「边角」就不许算命中
+        self.assertFalse(r["passed"])
+
+    def test_eval_apply_judgments_untouched_without_entry(self):
+        import run_eval
+        row = {"id": 2, "kind": "zh", "query": "q", "top1": "x", "top3": ["x"],
+               "hit1": True, "hit3": True, "recall": True, "violated": [],
+               "passed": True, "elapsed_s": 0.0, "mode": "m",
+               "accept": ["x"], "must_not": []}
+        out = run_eval.apply_judgments([row], {"9": {"a": 0.9}})
+        self.assertIs(out[0], row)  # 没判的用例原样返回，不改写
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

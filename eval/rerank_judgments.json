@@ -1,0 +1,50 @@
+{
+  "_meta": [
+    "宿主模型 rerank 判分（2026-10-26）。量尺：0.8-1.0 直接实现 / 0.5-0.7 相关 / 0.2-0.4 边角 / <0.2 排除。",
+    "判分标准是「能不能干这活」（能力匹配），依据是各候选 SKILL.md 描述原文，不是文本相似度。",
+    "只判了脚本递上来的候选（rerank prepare --top 10/20）。脚本没送对的进来，宿主也救不了。",
+    "#14 / #22 是「库存缺口哨兵」：库内没有 OCR 提取扫描件表格的技能，宿主如实判边角(<0.5)，",
+    "  这两条在 rerank 层也必须保持失败——失败是库存问题，不是检索问题。装上对口技能前不该绿。"
+  ],
+  "9": {
+    "contract-review": 0.9,
+    "security-audit": 0.25,
+    "receiving-code-review": 0.05,
+    "pre-submission-reviewer": 0.1
+  },
+  "11": {
+    "python-testing": 0.95,
+    "verification-loop": 0.4,
+    "python-patterns": 0.35,
+    "light-experiment-coding": 0.25,
+    "codebase-design": 0.15
+  },
+  "14": {
+    "pdf": 0.7,
+    "regex-vs-llm-structured-text": 0.55,
+    "docx": 0.2,
+    "tencent-docs-sheet-generation": 0.15,
+    "workbuddy-sheet-generation": 0.15,
+    "handoff": 0.0
+  },
+  "16": {
+    "light-review-rebuttal": 0.9,
+    "rebuttal-guidance": 0.85,
+    "receiving-code-review": 0.3,
+    "weixinpay-feedback": 0.0
+  },
+  "21": {
+    "contract-review": 0.9,
+    "customs-trade-compliance": 0.1,
+    "light-review-rebuttal": 0.1,
+    "docx": 0.1,
+    "writing-beats": 0.05,
+    "buddy-image-processing": 0.05
+  },
+  "22": {
+    "workbuddy-sheetagent": 0.35,
+    "tencent-docs-sheetagent": 0.35,
+    "xlsx": 0.3,
+    "workbuddy-office-routing": 0.3
+  }
+}

@@ -86,6 +86,7 @@ def run_case(index, case, top=_TOPK):
         "elapsed_s": round(elapsed, 3),
         "mode": find.retrieval_mode(vec, backend, n_bag),
         "accept": accept,
+        "must_not": must_not,
     }
 
 
@@ -144,6 +145,40 @@ def print_report(rows, title="LJC 检索评估"):
     return s
 
 
+def apply_judgments(rows, judgments):
+    """宿主 rerank 判分回流（纯函数）：judgments = {"<case_id>": {"skill": 0–1 分}}。
+    只对给了判分的用例生效：按判分重排 top1/top3，<0.2（「排除」档）不进 top3。
+    宿主只能判脚本递给它的候选——脚本没送对的进来，宿主也救不了，这正是要度量的。"""
+    out = []
+    for r in rows:
+        j = judgments.get(str(r["id"])) or judgments.get(r["id"])
+        if not j:
+            out.append(r)
+            continue
+        ranked = [n for n, _s in sorted(j.items(), key=lambda kv: (-kv[1], kv[0]))]
+        top1 = ranked[0] if ranked else None
+        top1_score = j.get(top1, 0.0) if top1 else 0.0
+        top3 = [n for n in ranked[:3] if j[n] >= 0.2]
+        accept = r.get("accept") or []
+        must_not = r.get("must_not") or []
+        # 违规语义（rerank 层）：宿主主动背书（判 ≥0.5）或选为 top1 的已知错误答案
+        # 才算误导——被宿主明确压到下层（<0.5）不算，那正是 rerank 在做的事
+        bad = [n for n in must_not if j.get(n, 0) >= 0.5 or n == top1]
+        nr = dict(r)
+        nr.update({
+            "top1": top1, "top3": top3,
+            "hit1": bool(top1 and top1 in accept and top1_score >= 0.5),
+            "hit3": bool(accept and any(n in top3 for n in accept)),
+            "recall": bool(accept and any(n in ranked[:_TOPK] for n in accept)),
+            "violated": bad,
+            "passed": bool(top1 and top1 in accept and top1_score >= 0.5) and not bad,
+            "top1_score": top1_score,
+            "reranked": True,
+        })
+        out.append(nr)
+    return out
+
+
 def compare_rows(rows, base_rows):
     """纯函数：把两次结果分成四栏。
     「无区分度」一栏是重点——两次都通过的用例不能证明任何改进，
@@ -181,6 +216,8 @@ def main():
     ap.add_argument("--json", action="store_true")
     ap.add_argument("--save", metavar="PATH", help="把本次结果存为基线")
     ap.add_argument("--compare", metavar="PATH", help="与基线对比")
+    ap.add_argument("--rerank", metavar="FILE",
+                    help="宿主判分文件 {case_id: {skill: 0-1}}，回流后单独报告「rerank 层」成绩")
     args = ap.parse_args()
 
     ensure_interpreter()
@@ -198,6 +235,20 @@ def main():
                          ensure_ascii=False, indent=1))
     else:
         print_report(rows)
+
+    if args.rerank:
+        judgments = json.load(open(args.rerank, encoding="utf-8"))
+        rrows = apply_judgments(rows, judgments)
+        n_j = sum(1 for r in rrows if r.get("reranked"))
+        rs = summarize(rrows)
+        print(f"\n── rerank 层（宿主模型读原文判「能力匹配」，{n_j} 条已判）──")
+        print(f"top1 {rs['hit1']}/{rs['cases']}（脚本层 {summarize(rows)['hit1']}/{rs['cases']}）   "
+              f"recall {rs['recall']}/{rs['cases']}   违规 {rs['violated']}")
+        for r in rrows:
+            if r.get("reranked"):
+                base_hit = "✓" if [x for x in rows if x["id"] == r["id"]][0]["hit1"] else "✗"
+                print(f"  #{r['id']} {r['query'][:30]}: 脚本 {base_hit} → rerank "
+                      f"{'✓' if r['hit1'] else '✗'}（top1={r['top1']}）")
 
     if args.save:
         with open(args.save, "w", encoding="utf-8") as f:

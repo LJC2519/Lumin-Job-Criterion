@@ -15,6 +15,8 @@ WorkBuddy 内置技能 + 插件缓存最新版，可用环境变量 LJC_SKILLS_D
     python3 find.py doctor               # 一键体检：索引/断链/根目录/通道
     python3 find.py semantic             # 语义后端自检（探测到就用，没探测到说明怎么开）
     python3 find.py semantic --clear-cache  # 删掉向量缓存（换模型会自动作废，也可手动清）
+    python3 find.py rerank "任务"        # 出评审计分表：候选+原文路径+量尺，宿主模型判分用
+    python3 find.py rerank apply "任务" --scores "a:0.9,b:0.5"  # 宿主判分回流，判分为权威排序
     python3 find.py list                  # 列出全部已索引技能
 
 分工：本脚本管「已装的里有没有」（秒回、零网络）；
@@ -76,6 +78,9 @@ ZH_TO_EN = {
     "拆解": ["分解", "decompose", "breakdown"],
     "分解": ["decompose", "breakdown", "subtask"],
     "小任务": ["subtask", "to-tickets", "ticket", "分解"],
+    "修改意见": ["rebuttal", "reviewer", "feedback"],
+    "逐条回复": ["rebuttal", "response"],
+    "条款": ["clause", "terms", "contract", "agreement"],
     "爬虫": ["scraping", "scrape", "crawl", "fetch", "spider"],
     "抓取": ["scraping", "scrape", "fetch", "extract", "download"],
     "抓网页": ["scraping", "fetch", "web"],
@@ -1496,6 +1501,128 @@ def cmd_doctor():
                        if problems else "全部正常"))
 
 
+# ── rerank：脚本排「相似度」，宿主模型排「能力匹配」──
+# 2026-10-26 评估集证明：6 条欠账（audit 撞 security-audit 等）的根因是权重结构，
+# 调词袋是无底洞、语义捞回准确率只有 50%。正解是让宿主模型读候选原文判断
+# 「这技能真能干这活吗」。本节只做出题（prepare 计分表）和收卷（apply 回流），
+# 判分永远由宿主模型完成——脚本不打这个分，因为脚本不懂「能力」。
+
+
+def rubric_bin(score):
+    """把宿主模型的 0–1 判分映射到量尺标签（纯函数，来自 iterative-retrieval 的四级）。"""
+    if score >= 0.8:
+        return "直接实现"
+    if score >= 0.5:
+        return "相关"
+    if score >= 0.2:
+        return "边角"
+    return "排除"
+
+
+def parse_rerank_scores(s):
+    """解析 "name:0.9, name:0.5" → ({name: float}, [坏条目])。
+    越界截断到 [0,1]；无法解析的条目跳过并进坏条目列表，绝不抛异常中断。"""
+    scores, bad = {}, []
+    for part in (s or "").split(","):
+        part = part.strip()
+        if not part:
+            continue
+        name, sep, val = part.rpartition(":")
+        name = name.strip()
+        if not sep or not name:
+            bad.append(part)
+            continue
+        try:
+            v = float(val)
+        except ValueError:
+            bad.append(part)
+            continue
+        scores[name] = min(max(v, 0.0), 1.0)
+    return scores, bad
+
+
+def merge_rerank(candidates, scores):
+    """把宿主判分合进候选列表（纯函数）：
+    有分的按判分降序（同分按名字），无分的保持原序跟在后面。
+    返回 [(来源标签, name, 分数或 None, entry)]。"""
+    judged = sorted(((scores[e["name"]], e) for e in candidates
+                     if e["name"] in scores),
+                    key=lambda x: (-x[0], x[1]["name"]))
+    rest = [e for e in candidates if e["name"] not in scores]
+    return ([("rerank", e["name"], s, e) for s, e in judged]
+            + [("原序", e["name"], None, e) for e in rest])
+
+
+def _rerank_pool(index, query, size=12):
+    """词袋（+TF-IDF）给出一届候选，供宿主模型打分。语义默认关闭，这里不请模型。"""
+    terms = expand_query(query)
+    sem = semantic_scores(index["skills"], terms)
+    scored, rescued, _hidden = partition_results(index, terms, vec=[], sem=sem)
+    pool = [e for _, _, e in scored] + [e for _, _, e in rescued]
+    return pool[:size]
+
+
+def cmd_rerank(query, sub="prepare", top=6, scores_text=None, as_json=False):
+    """rerank 工作流的两个半场：
+    prepare —— 出评审计分表（候选+原文路径+量尺），交给宿主模型判分；
+    apply   —— 收卷重排：宿主判分是权威排序，脚本分只做参考。"""
+    index = load_index()
+    if sub == "prepare":
+        terms = expand_query(query)
+        sem = semantic_scores(index["skills"], terms)
+        scored, rescued, _hidden = partition_results(index, terms, vec=[], sem=sem)
+        script_pts = {e["name"]: s for s, _h, e in scored}
+        pool = [e for _, _, e in scored] + [e for _, _, e in rescued]
+        pool = pool[:max(top, 6)]
+        if as_json:
+            print(json.dumps({"query": query, "rubric": "0.8-1.0 直接实现 / 0.5-0.7 相关 / "
+                              "0.2-0.4 边角 / <0.2 排除", "candidates": pool},
+                             ensure_ascii=False, indent=1))
+            return
+        print(f"RERANK 评审计分表 ——「{query}」（{len(pool)} 个候选）")
+        print("量尺：0.8–1.0 直接实现 │ 0.5–0.7 相关 │ 0.2–0.4 边角 │ <0.2 排除")
+        print("判分标准是「能不能干这活」（能力匹配），不是「文本像不像」。")
+        print("逐个读候选 SKILL.md 原文后打 0–1 分，然后回卷：\n")
+        print(f'  find.py rerank apply "{query}" --scores "name:0.9,name:0.5"\n')
+        for i, e in enumerate(pool, 1):
+            desc = (e.get("description") or e.get("description_zh") or "（无描述）")
+            skill_md = os.path.join(e["path"], "SKILL.md")
+            pts = script_pts.get(e["name"])
+            pts_s = f"脚本分:{pts}" if pts else "语义候选"
+            print(f"─ {i}. [{e['name']}]  来源:{e['source']}  {pts_s}")
+            print(f"   描述: {desc[:220]}{'…' if len(desc) > 220 else ''}")
+            print(f"   原文: {skill_md}")
+        return
+    # apply：收卷
+    scores, bad = parse_rerank_scores(scores_text)
+    if bad:
+        print(f"⚠ 无法解析的判分（已跳过）: {', '.join(bad)}")
+    if not scores:
+        print("没有有效判分。用法: find.py rerank apply \"查询\" --scores \"name:0.9,...\"")
+        return
+    pool = _rerank_pool(index, query)
+    unknown = [n for n in scores if n not in {e["name"] for e in pool}]
+    if unknown:
+        print(f"⚠ 不在候选池（可能是更早届的）: {', '.join(unknown)}")
+    merged = merge_rerank(pool, scores)
+    ranked_names = [n for tag, n, _s, _e in merged if tag == "rerank"]
+    record_hits("rerank", query, ranked_names, [])
+    if as_json:
+        print(json.dumps({"query": query,
+                          "ranked": [{"name": n, "host_score": s,
+                                      "bin": rubric_bin(s)}
+                                     for tag, n, s, _e in merged if tag == "rerank"],
+                          "unjudged": [n for tag, n, _s, _e in merged if tag == "原序"]},
+                         ensure_ascii=False, indent=1))
+        return
+    print(f"rerank 回流 ——「{query}」（宿主判分为权威排序，{len(ranked_names)} 个已判）\n")
+    for i, (tag, n, s, e) in enumerate(merged, 1):
+        if tag == "rerank":
+            print(f"{i:2d}. [{n}]  宿主判分 {s:.2f}（{rubric_bin(s)}）  来源:{e['source']}")
+        else:
+            print(f"{i:2d}. [{n}]  （未判分，脚本原序）  来源:{e['source']}")
+
+
 def reexec_needed(argv):
     """这一轮要不要为语义后端换解释器？先廉价地估一下词袋命中数再决定。
     估不出来（索引坏了等）就保守返回 True——宁可多换一次，不要漏掉语义能力。"""
@@ -1563,6 +1690,24 @@ def main():
         cmd_doctor()
     elif cmd == "semantic":
         cmd_semantic(clear_cache="--clear-cache" in sys.argv)
+    elif cmd == "rerank":
+        rest = sys.argv[2:]
+        sub = "prepare"
+        if rest and rest[0] in ("prepare", "apply"):
+            sub, rest = rest[0], rest[1:]
+        as_json = "--json" in rest
+        scores_text = None
+        if "--scores" in rest:
+            i = rest.index("--scores")
+            scores_text = rest[i + 1] if i + 1 < len(rest) else ""
+            rest = rest[:i] + rest[i + 2:]
+        top = 6
+        if "--top" in rest:
+            i = rest.index("--top")
+            top = int(rest[i + 1])
+            rest = rest[:i] + rest[i + 2:]
+        query = strip_flags(" ".join(rest))
+        cmd_rerank(query, sub=sub, top=top, scores_text=scores_text, as_json=as_json)
     elif cmd == "list":
         cmd_list()
     else:
