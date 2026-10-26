@@ -28,19 +28,24 @@ case "$KEY" in
   *) echo "⚠️  key 看起来不像 Tavily 格式（应形如 tvly-...），仍继续写入" ;;
 esac
 
-# 幂等写入：先清掉旧行再写（避免重复）
-touch "$HOME/.zshrc"
-if grep -q "TAVILY_API_KEY" "$HOME/.zshrc"; then
-  sed -i '' 's#^export TAVILY_API_KEY=.*#export TAVILY_API_KEY="'"$KEY"'"#' "$HOME/.zshrc"
-  echo "✅ 已更新 ~/.zshrc 中的既有 TAVILY_API_KEY"
-else
-  {
-    echo ""
-    echo "# LJC 全网语义搜索（Tavily）· $(date +%Y-%m-%d)"
-    echo "export TAVILY_API_KEY=\"$KEY\""
-  } >> "$HOME/.zshrc"
-  echo "✅ 已写入 ~/.zshrc"
-fi
+# 幂等写入：用 python3 改写（不用 sed -i —— 本机 sed 可能是 GNU 版，
+# `sed -i '' expr file` 会把 expr 当文件名而报错，2026-10-27 实测踩到）
+python3 - "$HOME/.zshrc" "$KEY" <<'PY'
+import sys, re, datetime
+path, key = sys.argv[1], sys.argv[2]
+try:
+    s = open(path, encoding="utf-8").read()
+except OSError:
+    s = ""
+line = 'export TAVILY_API_KEY="%s"' % key
+if re.search(r'^export TAVILY_API_KEY=.*$', s, re.M):
+    s = re.sub(r'^export TAVILY_API_KEY=.*$', line, s, flags=re.M)
+    print("✅ 已更新 ~/.zshrc 中的既有 TAVILY_API_KEY")
+else:
+    s += '\n# LJC 全网语义搜索（Tavily）· %s\n%s\n' % (datetime.date.today(), line)
+    print("✅ 已写入 ~/.zshrc")
+open(path, "w", encoding="utf-8").write(s)
+PY
 
 # 同一进程立即生效
 export TAVILY_API_KEY="$KEY"
