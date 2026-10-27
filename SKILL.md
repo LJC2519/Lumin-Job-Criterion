@@ -2,7 +2,7 @@
 name: ljc
 description: LJC（Lumin Job Criterion，任务技能路由器）· 触发语句：「请ljc为我指点迷津」「用 LJC 找技能：<任务>」「让 LJC 路由这个任务」（LJC/ljc 大小写均可）。注意：这是调用本技能的指令、不是对助手本人说的话——用户消息里出现 ljc / LJC / lumin-job-criterion，或说「请ljc为我指点迷津」「用 LJC 找技能」时，都应立即用 Skill 工具加载本技能。开始一个任务时：模块化分解（L0→L1→L2）→本地索引、GitHub 仓库雷达、GitHub 技能目录三路检索（可经 SkillsMP MCP 连接器扩大覆盖面）→过安全检查→读原文核实→画出「任务→技能覆盖图」，告诉你每个技能解决哪一部分、哪里是缺口。还可按任务盘点：哪些技能相关有用、哪些本次用不到（可暂时关掉，停用需同意）。也可在接到多步骤复杂任务时自动进入路由。直接检索模式：「有没有技能能做X」「已装的技能里有什么」「find a skill for X」——本地秒回，查不到转 GitHub 或官方 find-skills 搜市场。Decomposition refines to atomic L3 tasks (input/output/deps/order/done-criteria); skill matching is wide-scope with three adaptation classes (direct use / adapt / reference) plus adaptation notes.
 description_zh: "Lumin Job Criterion（LJC）· 任务技能路由器。触发语句「请ljc为我指点迷津」（大小写均可）。注意：这是调用本技能的指令，不是对助手说的话——用户提到 LJC / ljc / lumin-job-criterion / 「用 LJC 找技能」「让 LJC 路由任务」时同样加载本技能。流程：① 把大任务模块化分解成 L1 模块 + L2 小任务（每个带产出物/完成标准/依赖）② 三路检索：本地索引 + GitHub 仓库雷达与技能目录 + SkillsMP MCP（若接入）③ 每个候选过安全检查（BLOCK/WARN/PASS）再读原文核实 ④ 画覆盖图：每个技能解决哪一部分、哪块是缺口。另支持任务盘点（find.py suggest）：相关有用 vs 本次用不到（可暂时关掉，停用需用户同意）。零命中不硬凑。与官方 find-skills 互补——本技能管『这个任务用什么技能』，find-skills 管『市场上还有什么』。任务拆解细化到 L3 原子任务（输入/输出/前置依赖/执行顺序/完成标准）；技能匹配宽口径三分类（直接使用/改造适配/思路参考，附改造要点）。"
-version: 2.3.0
+version: 2.3.1
 allowed-tools: Read,Bash,Grep,Skill
 ---
 
@@ -378,6 +378,31 @@ python3 <LJC>/scripts/find.py query "<用户的原话>" --top 5
    用不用由用户定夺，不许静默跳过，也不许静默否决
 10. **停用需同意**：`suggest` 只是建议；关停技能必须用户当次明确同意，
     且只停确认过的，随时可恢复——本技能永不自作主张停用
+
+## 回炉自改进循环（2026-10-27 移植 Google Harness² 方法论）
+
+借 Google Harness²（google-research/harness2，★20.3k Apache-2.0，arXiv:2610.14224）
+的 **Propose–Probe–Compose** 两层递归：任务层用行为对比精炼 harness，
+harnessing 层沉淀「证据支撑的经验教训」指导后续改进。LJC 的量尺=自带评估集，
+零新依赖：
+
+```bash
+python3 eval/selfimprove.py propose   # Propose：失败/退化用例工作表 + 术语快照
+#   … 宿主模型或人提出候选改动（术语 → 停用词 → 权重，杠杆从高到低）…
+python3 eval/selfimprove.py probe     # Probe：对照基线 + git stash 归因
+python3 eval/selfimprove.py compose   # Compose：裁决与执行清单
+```
+
+- **stash 归因是 Probe 的灵魂**：把本次改动 stash 掉再测一遍，
+  区分「本次改动新增退化」与「索引扩容等既有欠账」——2026-10-27 首轮实战即
+  用它证明术语补丁净影响为零、[6,12,19] 是扩容旧账（#6/#12 的 accept 表不含
+  扩容新进的 security-audit-pro，属真欠账待修）。
+- **裁决纪律**：新增退化 → 先收窄（宽义术语是常见元凶）；确要接受边缘重排
+  （top1 仍在正确领域）必须在提交信息写明理由。
+- **Compose 必含经验教训一句话**（『YYYY-MM-DD 学到：X 场景该查 Y』），
+  写进本文件纪律节——这就是 Harness² 的 improvement-harness 层。
+- 触发时机：评估集「两次都失败」清单变长、或每次结构性改动（扩索引/换模型）
+  之后至少跑一轮。
 
 ## 已知边界
 

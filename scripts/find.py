@@ -230,6 +230,11 @@ ZH_TO_EN = {
     "固件": ["firmware", "reverse engineer", "embedded", "iot"],
     "拆包": ["unpack", "decompile", "reverse engineer", "asar"],
     "electron": ["electron", "javascript", "reverse engineer", "decompile"],
+    # ── 文档格式转换域（2026-10-27 补：修「word 转 pdf 找不到转换技能」——
+    #    术语表此前完全没有"转换"这个词，docx→pdf 场景召回只有文件名撞词。
+    #    收窄版：去掉 transform/export 等宽义词后评估集无新增退化）──
+    "转换": ["convert", "conversion"],
+    "转成": ["convert to"],
 }
 
 

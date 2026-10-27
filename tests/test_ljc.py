@@ -1082,5 +1082,30 @@ class TestSecurityCheckDeepAndPatterns(unittest.TestCase):
         self.assertIn("回退", note)
 
 
+class TestSelfImproveDecide(unittest.TestCase):
+    """2026-10-27 Harness² 方法论移植：Probe 裁决函数。"""
+
+    @classmethod
+    def setUpClass(cls):
+        repo_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        sys.path.insert(0, os.path.join(repo_root, "eval"))
+        import importlib
+        cls.si = importlib.import_module("selfimprove")
+
+    def test_new_degradation_blocks_adoption(self):
+        verdict = self.si.decide(base_deg=[19], degraded=[6, 19], improved=[11])
+        self.assertIn("新增退化", verdict)
+        self.assertIn("[6]", verdict)
+
+    def test_preexisting_debt_allows_adoption(self):
+        verdict = self.si.decide(base_deg=[6, 12, 19], degraded=[6, 12, 19], improved=[11, 16])
+        self.assertIn("无新增退化", verdict)
+        self.assertIn("可采纳", verdict)
+
+    def test_improvement_reported(self):
+        verdict = self.si.decide(base_deg=[19], degraded=[19], improved=[11, 16])
+        self.assertIn("[11, 16]", verdict)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
