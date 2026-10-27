@@ -2,7 +2,7 @@
 name: ljc
 description: LJC（Lumin Job Criterion，任务技能路由器）· 触发语句：「请ljc为我指点迷津」「用 LJC 找技能：<任务>」「让 LJC 路由这个任务」（LJC/ljc 大小写均可）。注意：这是调用本技能的指令、不是对助手本人说的话——用户消息里出现 ljc / LJC / lumin-job-criterion，或说「请ljc为我指点迷津」「用 LJC 找技能」时，都应立即用 Skill 工具加载本技能。开始一个任务时：模块化分解（L0→L1→L2）→本地索引、GitHub 仓库雷达、GitHub 技能目录三路检索（可经 SkillsMP MCP 连接器扩大覆盖面）→过安全检查→读原文核实→画出「任务→技能覆盖图」，告诉你每个技能解决哪一部分、哪里是缺口。还可按任务盘点：哪些技能相关有用、哪些本次用不到（可暂时关掉，停用需同意）。也可在接到多步骤复杂任务时自动进入路由。直接检索模式：「有没有技能能做X」「已装的技能里有什么」「find a skill for X」——本地秒回，查不到转 GitHub 或官方 find-skills 搜市场。Decomposition refines to atomic L3 tasks (input/output/deps/order/done-criteria); skill matching is wide-scope with three adaptation classes (direct use / adapt / reference) plus adaptation notes.
 description_zh: "Lumin Job Criterion（LJC）· 任务技能路由器。触发语句「请ljc为我指点迷津」（大小写均可）。注意：这是调用本技能的指令，不是对助手说的话——用户提到 LJC / ljc / lumin-job-criterion / 「用 LJC 找技能」「让 LJC 路由任务」时同样加载本技能。流程：① 把大任务模块化分解成 L1 模块 + L2 小任务（每个带产出物/完成标准/依赖）② 三路检索：本地索引 + GitHub 仓库雷达与技能目录 + SkillsMP MCP（若接入）③ 每个候选过安全检查（BLOCK/WARN/PASS）再读原文核实 ④ 画覆盖图：每个技能解决哪一部分、哪块是缺口。另支持任务盘点（find.py suggest）：相关有用 vs 本次用不到（可暂时关掉，停用需用户同意）。零命中不硬凑。与官方 find-skills 互补——本技能管『这个任务用什么技能』，find-skills 管『市场上还有什么』。任务拆解细化到 L3 原子任务（输入/输出/前置依赖/执行顺序/完成标准）；技能匹配宽口径三分类（直接使用/改造适配/思路参考，附改造要点）。"
-version: 2.2.0
+version: 2.3.0
 allowed-tools: Read,Bash,Grep,Skill
 ---
 
@@ -167,6 +167,7 @@ right-sizing 模式后强化；不满足就继续拆或合并）：
 | 通道 | 默认可用 | 需要什么 | 注意事项 |
 |---|---|---|---|
 | 本地索引（`find.py`） | ✅ 永远可用 | 无 | 秒回；索引与磁盘不一致会自动重建 |
+| 深扫层（SkillSpector） | ⚙️ 可选 | `uv tool install NVIDIA/skillspector`（★22.5k Apache-2.0） | `--deep` 显式启用；未装自动回退内置正则；macOS 需打平台补丁（见第 3 步安全门） |
 | GitHub 仓库雷达 | ✅ 需网络 | `GITHUB_TOKEN` 可选（提高限额） | 多词查询按**分组 OR** 搜 + 本地相关性重排；只想搜技能仓库加 `--skill-only` |
 | GitHub 技能目录（`--catalog`） | ✅ 需网络 | 同上 | 首次抓取有请求数成本，之后缓存 7 天 |
 | 全网语义（Tavily） | ❌ **默认关闭** | `TAVILY_API_KEY`（app.tavily.com 注册免费） | key 存两处：`~/.zshrc`（命令行用）+ `~/.workbuddy/ljc/tavily.key`（**GUI 应用读不到 .zshrc，必须有文件通道**）；未设 key 自动跳过 |
@@ -265,6 +266,25 @@ python3 <LJC>/scripts/security_check.py <候选技能路径或 owner/repo>
 本地已装候选若装着 `jason-security-audit` 技能，可另跑它的 `audit.py` 深审。
 误报类须知：讨论安全话题的技能自带关键词（扫描器扫到自己的模式表也会
 中招），机器负责不漏报，最终判断靠人。
+
+**★ --deep 深扫层（2026-10-27 接入 NVIDIA SkillSpector ★22.5k）**：
+
+```bash
+python3 scripts/security_check.py <本地目录> --deep   # 内置正则 + SkillSpector 71 模式/17 类
+```
+
+- 软依赖（同 LJC_SEMANTIC 纪律）：检测到 `skillspector` CLI 才启用，没装自动回退
+  内置正则，不影响默认行为；仅支持本地目录。
+- 结果合并：CRITICAL→BLOCK、HIGH→WARN、其余 INFO；自动滤除 `.git/`、`__pycache__/`、
+  `scripts/.cache/` 噪音；总风险分 ≥50 直接 BLOCK、≥25 至少 WARN。
+- 使用时机：默认不跑（正则秒回够用）；**要装第三方技能前、或用户对某候选有疑虑时**
+  加 `--deep`。慢（几秒到几十秒），别对批量候选全开。
+- 实战背书：LJC 自身通过 SkillSpector 全量扫描——58 条报告经逐条分诊全部为
+  范围噪音（.cache 第三方内容/tests 攻击样本 fixture）或设计内行为（凭证发固定
+  API 端点），无真实漏洞。
+- 已知坑：SkillSpector v2.12.0 在 macOS 上有平台 bug（os.open 不在
+  supports_dir_fd → 所有文件被拒），本机安装副本已打运行时探测补丁
+  （`~/skill-sources/skillspector` 有源码）；上游修复后此条可删。
 
 **适用尺**（是否真正契合子任务需求）——读原文核实：
 

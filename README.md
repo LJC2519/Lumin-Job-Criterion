@@ -28,6 +28,7 @@ python3 scripts/github_search.py "skill router"                  # GitHub repo r
 python3 scripts/github_search.py "diagram" --catalog             # four skill catalogs
 python3 scripts/web_search.py "convert pdf to word"              # web-wide semantic search (Tavily)
 python3 scripts/security_check.py <path-or-owner/repo>           # BLOCK/WARN/PASS gate
+  python3 scripts/security_check.py <本地目录> --deep   # 追加 NVIDIA SkillSpector 71 模式深扫（可选层）
 python3 scripts/check_updates.py                                 # update detection
 python3 scripts/find.py doctor                                   # self health check
 ```
