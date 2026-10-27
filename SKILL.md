@@ -331,6 +331,13 @@ python3 scripts/security_check.py <本地目录> --deep   # 内置正则 + Skill
   并行执行；多阶段长项目建议 `light-orchestrator`（状态持久 + 断点恢复）；
   代码类任务走完整链：**to-spec 固化规格 → to-tickets 拆工单 →
   implement / implement-spec 实施**（四个技能均已开放）
+- **质量回收**（2026-10-27 新增，对应「线上问题→评测集」与「无效意见率」原则）：
+  推荐交付后，引导用户记一笔真实结果——
+  `python3 scripts/recommend_outcome.py record --query <原话> --recommended <技能> --outcome accepted|rejected|unused`，
+  随时 `stats` 看采纳率与无效推荐率（两条曲线一起看）；
+  路由失败的案例当场回填：
+  `python3 scripts/case_backfill.py --query <原话> --accept <正确技能> [--note]`，
+  回填后跑 `eval/run_eval.py`——不通过=已知欠账，通过=防回归护栏
 - 问用户要不要现在加载某个技能开工（用 `Skill` 工具）
 - **本技能只读、只推荐**：安装任何技能必须用户明确同意，走 `find-skills`
   或 SkillsMP 的安装通道
