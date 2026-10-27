@@ -1,0 +1,477 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>LJC 使用说明书（新手版）</title>
+<style>
+  :root{
+    --ink:#1f2328; --sub:#57606a; --line:#d0d7de; --bg:#ffffff;
+    --panel:#f6f8fa; --blue:#0969da; --green:#1a7f37; --amber:#9a6700;
+    --red:#cf222e; --term:#0d1117; --termtx:#e6edf3;
+  }
+  *{box-sizing:border-box}
+  body{font-family:-apple-system,"PingFang SC","Hiragino Sans GB","Microsoft YaHei",sans-serif;
+       color:var(--ink);background:var(--bg);margin:0;line-height:1.75;font-size:15.5px}
+  .wrap{max-width:880px;margin:0 auto;padding:32px 24px 80px}
+  header.cover{border-bottom:3px solid var(--ink);padding-bottom:20px;margin-bottom:8px}
+  header.cover h1{font-size:30px;margin:0 0 6px;letter-spacing:.5px}
+  header.cover .tagline{color:var(--sub);font-size:16px;margin:0}
+  .meta{display:flex;gap:10px;flex-wrap:wrap;margin-top:14px}
+  .meta span{background:var(--panel);border:1px solid var(--line);border-radius:20px;
+             padding:2px 12px;font-size:12.5px;color:var(--sub)}
+  nav.toc{background:var(--panel);border:1px solid var(--line);border-radius:10px;
+          padding:16px 22px;margin:26px 0}
+  nav.toc b{display:block;margin-bottom:6px}
+  nav.toc ol{margin:0;padding-left:22px;columns:2;column-gap:40px}
+  nav.toc a{color:var(--blue);text-decoration:none}
+  h2{font-size:22px;margin:44px 0 14px;padding-bottom:8px;border-bottom:1px solid var(--line)}
+  h2 .no{color:var(--blue);margin-right:8px}
+  h3{font-size:17px;margin:26px 0 8px}
+  p{margin:8px 0}
+  .lead{font-size:16px;color:var(--ink)}
+  .tip,.warn,.danger{border-left:4px solid;border-radius:6px;padding:10px 14px;margin:12px 0;font-size:14.5px}
+  .tip{border-color:var(--green);background:#f0fff4}
+  .warn{border-color:var(--amber);background:#fff8e6}
+  .danger{border-color:var(--red);background:#fff5f5}
+  code{font-family:"SF Mono",Menlo,Consolas,monospace;font-size:.9em;
+       background:var(--panel);border:1px solid var(--line);border-radius:4px;padding:1px 6px}
+  .term{background:var(--term);color:var(--termtx);border-radius:10px;margin:12px 0;
+        font-family:"SF Mono",Menlo,Consolas,monospace;font-size:12.8px;line-height:1.65;
+        overflow-x:auto;box-shadow:0 1px 4px rgba(0,0,0,.15)}
+  .term .bar{display:flex;align-items:center;gap:6px;padding:8px 12px;border-bottom:1px solid #21262d}
+  .term .dot{width:11px;height:11px;border-radius:50%}
+  .term .dot.r{background:#ff5f56}.term .dot.y{background:#ffbd2e}.term .dot.g{background:#27c93f}
+  .term .title{margin-left:8px;color:#8b949e;font-size:11.5px}
+  .term pre{margin:0;padding:12px 16px;white-space:pre;overflow-x:auto}
+  .term .p{color:#7ee787}.term .c{color:#8b949e}.term .h{color:#79c0ff}.term .o{color:#ffa657}
+  table{border-collapse:collapse;width:100%;margin:12px 0;font-size:14px}
+  th,td{border:1px solid var(--line);padding:7px 11px;text-align:left;vertical-align:top}
+  th{background:var(--panel);font-weight:600}
+  .fig{margin:18px 0;text-align:center}
+  .fig svg{max-width:100%;height:auto;background:#fff;border:1px solid var(--line);border-radius:10px}
+  .fig .cap{font-size:13px;color:var(--sub);margin-top:6px}
+  .steps{counter-reset:s;padding-left:0;list-style:none}
+  .steps li{counter-increment:s;position:relative;padding-left:40px;margin:12px 0}
+  .steps li::before{content:counter(s);position:absolute;left:0;top:2px;width:26px;height:26px;
+    background:var(--blue);color:#fff;border-radius:50%;text-align:center;line-height:26px;font-size:14px}
+  details{border:1px solid var(--line);border-radius:8px;margin:8px 0;background:#fff}
+  details summary{cursor:pointer;padding:10px 14px;font-weight:600;list-style:none}
+  details summary::before{content:"▸ ";color:var(--blue)}
+  details[open] summary::before{content:"▾ "}
+  details .body{padding:0 14px 12px}
+  .kbd{display:inline-block;border:1px solid var(--line);border-bottom-width:2px;border-radius:5px;
+       background:var(--panel);padding:0 7px;font-family:monospace;font-size:13px}
+  footer{margin-top:56px;padding-top:16px;border-top:1px solid var(--line);
+         color:var(--sub);font-size:13px;text-align:center}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header class="cover">
+  <h1>LJC 使用说明书</h1>
+  <p class="tagline">Lumin Job Criterion · 任务技能路由器 —— 开始一个任务前，先问它「该用什么技能」</p>
+  <div class="meta">
+    <span>版本 v2.2.0</span><span>零依赖 · 纯 Python 标准库</span>
+    <span>平台：macOS / Linux / Windows（有 python3 即可）</span>
+    <span>许可证：MIT</span>
+  </div>
+</header>
+
+<nav class="toc">
+  <b>📑 目录</b>
+  <ol>
+    <li><a href="#s1">LJC 是什么</a></li>
+    <li><a href="#s2">下载与安装（3 分钟）</a></li>
+    <li><a href="#s3">最常用法：一句话触发</a></li>
+    <li><a href="#s4">命令详解</a></li>
+    <li><a href="#s5">完整使用流程示例</a></li>
+    <li><a href="#s6">常见问题 FAQ</a></li>
+    <li><a href="#s7">注意事项与安全约定</a></li>
+    <li><a href="#s8">附：命令速查表</a></li>
+  </ol>
+</nav>
+
+<!-- ============ 1 简介 ============ -->
+<h2 id="s1"><span class="no">一、</span>LJC 是什么</h2>
+
+<p class="lead">技能（Skill）越装越多，但「这个任务到底该用哪个技能」没有现成工具能回答。
+LJC 就是补这个缺口的：<b>把你说的大任务拆成小任务，找到每个小任务能用的技能，
+过一道安全检查，最后画一张「任务 → 技能」覆盖图</b>——哪些部分有现成技能、哪些是缺口，一眼看清。</p>
+
+<div class="fig">
+<svg viewBox="0 0 800 240" width="100%" role="img" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <marker id="ar" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M2 1L8 5L2 9" fill="none" stroke="#57606a" stroke-width="1.5"/>
+    </marker>
+  </defs>
+  <rect x="16" y="88" width="150" height="64" rx="10" fill="#eaf3fc" stroke="#0969da"/>
+  <text x="91" y="114" text-anchor="middle" font-size="15" font-weight="600" fill="#1f2328">你的任务</text>
+  <text x="91" y="136" text-anchor="middle" font-size="12" fill="#57606a">「做个 XX」</text>
+  <rect x="216" y="70" width="170" height="100" rx="10" fill="#fff8e6" stroke="#9a6700"/>
+  <text x="301" y="98" text-anchor="middle" font-size="15" font-weight="700" fill="#1f2328">LJC</text>
+  <text x="301" y="120" text-anchor="middle" font-size="12" fill="#57606a">① 拆解成小任务</text>
+  <text x="301" y="140" text-anchor="middle" font-size="12" fill="#57606a">② 检索技能</text>
+  <text x="301" y="158" text-anchor="middle" font-size="12" fill="#57606a">③ 安全审查</text>
+  <rect x="436" y="16" width="150" height="46" rx="8" fill="#f6f8fa" stroke="#d0d7de"/>
+  <text x="511" y="36" text-anchor="middle" font-size="12.5" fill="#1f2328">本地已装技能</text>
+  <text x="511" y="52" text-anchor="middle" font-size="11" fill="#57606a">秒回 · 零网络</text>
+  <rect x="436" y="70" width="150" height="46" rx="8" fill="#f6f8fa" stroke="#d0d7de"/>
+  <text x="511" y="90" text-anchor="middle" font-size="12.5" fill="#1f2328">GitHub</text>
+  <text x="511" y="106" text-anchor="middle" font-size="11" fill="#57606a">仓库雷达 + 技能目录</text>
+  <rect x="436" y="124" width="150" height="46" rx="8" fill="#f6f8fa" stroke="#d0d7de"/>
+  <text x="511" y="144" text-anchor="middle" font-size="12.5" fill="#1f2328">SkillHub 市场</text>
+  <text x="511" y="160" text-anchor="middle" font-size="11" fill="#57606a">中文语义搜索</text>
+  <rect x="436" y="178" width="150" height="46" rx="8" fill="#f6f8fa" stroke="#d0d7de"/>
+  <text x="511" y="198" text-anchor="middle" font-size="12.5" fill="#1f2328">Tavily 全网</text>
+  <text x="511" y="214" text-anchor="middle" font-size="11" fill="#57606a">需配置 key（可选）</text>
+  <rect x="636" y="88" width="150" height="64" rx="10" fill="#f0fff4" stroke="#1a7f37"/>
+  <text x="711" y="112" text-anchor="middle" font-size="14" font-weight="600" fill="#1a7f37">覆盖图 + 建议</text>
+  <text x="711" y="132" text-anchor="middle" font-size="11.5" fill="#57606a">哪个技能管哪块</text>
+  <text x="711" y="146" text-anchor="middle" font-size="11.5" fill="#57606a">哪里是缺口</text>
+  <path d="M166 120 L212 120" fill="none" stroke="#57606a" stroke-width="1.6" marker-end="url(#ar)"/>
+  <path d="M386 120 L432 120" fill="none" stroke="#57606a" stroke-width="1.6" marker-end="url(#ar)"/>
+  <path d="M586 120 L632 120" fill="none" stroke="#57606a" stroke-width="1.6" marker-end="url(#ar)"/>
+</svg>
+<p class="cap">图 1 · LJC 定位：任务进来，四路检索，出一张覆盖图</p>
+</div>
+
+<h3>它只做两件事</h3>
+<table>
+  <tr><th style="width:130px">主责</th><th>含义</th></tr>
+  <tr><td><b>分解任务</b></td><td>把大任务拆成模块 → 小任务 → 原子任务。每个原子任务写清五要素：<b>输入 / 输出 / 前置依赖 / 执行顺序 / 完成标准</b>——拿到手就能做，不用再猜。</td></tr>
+  <tr><td><b>找技能</b></td><td>为每个小任务匹配现成技能或可借鉴的开源项目，按相关度分三类：<b>直接使用 / 改造适配 / 思路参考</b>，并附改造要点和匹配理由。</td></tr>
+</table>
+
+<div class="warn"><b>它不做什么（重要预期）</b>：LJC 只给信息、给路径、给命令，<b>不会替你下载、安装、执行任何东西</b>。
+零命中的时候它会直说「没有」，不会硬凑一个不相关的推荐糊弄你。</div>
+
+<!-- ============ 2 安装 ============ -->
+<h2 id="s2"><span class="no">二、</span>下载与安装（3 分钟）</h2>
+
+<p>LJC 托管在 GitHub：<code>github.com/LJC2519/Lumin-Job-Criterion</code>。纯 Python 标准库实现，<b>不需要 pip install 任何东西</b>，clone 下来就能跑。</p>
+
+<h3>第 1 步 · 克隆仓库</h3>
+<div class="term">
+  <div class="bar"><span class="dot r"></span><span class="dot y"></span><span class="dot g"></span><span class="title">终端</span></div>
+  <pre><span class="p">$</span> git clone https://github.com/LJC2519/Lumin-Job-Criterion.git
+<span class="c"># 国内网络慢可用镜像：</span>
+<span class="p">$</span> git clone https://ghproxy.net/https://github.com/LJC2519/Lumin-Job-Criterion.git
+<span class="p">$</span> <span class="h">cd</span> Lumin-Job-Criterion</pre>
+</div>
+
+<h3>第 2 步 · 立刻试一条命令（验证装好了）</h3>
+<div class="term">
+  <div class="bar"><span class="dot r"></span><span class="dot y"></span><span class="dot g"></span><span class="title">终端</span></div>
+  <pre><span class="p">$</span> python3 scripts/find.py doctor
+
+LJC doctor —— 自检
+ ✓ 索引：115 个技能，建于 2026-10-27 11:10:58（9 分钟前）
+ ✓ GitHub 可达（市场通道可用）
+ ✓ 技能目录缓存：13 个文件（7 天 TTL）
+结论：<span class="p">全部正常</span></pre>
+</div>
+<p class="cap">第一次运行会自动扫描技能目录、建立索引（约 1 秒），无需手动初始化。</p>
+
+<h3>第 3 步（可选）· 注册成 WorkBuddy 技能</h3>
+<p>如果你在用 WorkBuddy，把它链进技能目录，之后在对话里说一句话就能调用整个流程：</p>
+<div class="term">
+  <div class="bar"><span class="dot r"></span><span class="dot y"></span><span class="dot g"></span><span class="title">终端</span></div>
+  <pre><span class="p">$</span> ln -s <span class="o">/path/to</span>/Lumin-Job-Criterion ~/.workbuddy/skills/lumin-job-criterion
+<span class="p">$</span> python3 ~/.workbuddy/skills/lumin-job-criterion/scripts/find.py build</pre>
+</div>
+<div class="tip"><b>可选增强（不影响基本使用）</b>：
+① 设置 <code>GITHUB_TOKEN</code> 环境变量 → GitHub 检索限额从 10 次/分提到 30 次/分；
+② 配置 Tavily key 开启「全网语义搜索」通道 → 见 <a href="#faq-tavily">FAQ 第 5 条</a>。</div>
+
+<div class="fig">
+<svg viewBox="0 0 800 150" width="100%" role="img" xmlns="http://www.w3.org/2000/svg">
+  <defs><marker id="ar2" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+    <path d="M2 1L8 5L2 9" fill="none" stroke="#57606a" stroke-width="1.5"/></marker></defs>
+  <rect x="30" y="40" width="210" height="70" rx="10" fill="#eaf3fc" stroke="#0969da"/>
+  <text x="135" y="68" text-anchor="middle" font-size="14" font-weight="600" fill="#1f2328">① git clone</text>
+  <text x="135" y="90" text-anchor="middle" font-size="11.5" fill="#57606a">拉下仓库，零依赖</text>
+  <rect x="295" y="40" width="210" height="70" rx="10" fill="#f6f8fa" stroke="#d0d7de"/>
+  <text x="400" y="68" text-anchor="middle" font-size="14" font-weight="600" fill="#1f2328">② doctor 自检</text>
+  <text x="400" y="90" text-anchor="middle" font-size="11.5" fill="#57606a">自动建索引，1 秒</text>
+  <rect x="560" y="40" width="210" height="70" rx="10" fill="#f0fff4" stroke="#1a7f37"/>
+  <text x="665" y="68" text-anchor="middle" font-size="14" font-weight="600" fill="#1f2328">③（可选）链入 WorkBuddy</text>
+  <text x="665" y="90" text-anchor="middle" font-size="11.5" fill="#57606a">对话一句话触发全流程</text>
+  <path d="M240 75 L291 75" fill="none" stroke="#57606a" stroke-width="1.6" marker-end="url(#ar2)"/>
+  <path d="M505 75 L556 75" fill="none" stroke="#57606a" stroke-width="1.6" marker-end="url(#ar2)"/>
+</svg>
+<p class="cap">图 2 · 安装只需两步，第三步可选</p>
+</div>
+
+<!-- ============ 3 触发 ============ -->
+<h2 id="s3"><span class="no">三、</span>最常用法：在 WorkBuddy 里说一句话</h2>
+
+<p>多数时候你<b>不需要碰终端</b>。在 WorkBuddy 对话里说：</p>
+
+<div class="term">
+  <div class="bar"><span class="dot r"></span><span class="dot y"></span><span class="dot g"></span><span class="title">WorkBuddy 对话框</span></div>
+  <pre><span class="h">请ljc为我指点迷津</span>：我想给团队做一个任务分配看板</pre>
+</div>
+
+<p>LJC 会自动走完全流程：<b>验料（确认任务前提）→ 拆解（L1 模块 → L2 小任务 → L3 原子任务）→
+四路检索 → 安全审查 → 画出带依赖关系的覆盖图</b>。你照图执行即可。</p>
+
+<table>
+  <tr><th>触发说法</th><th>效果</th></tr>
+  <tr><td><code>请ljc为我指点迷津：&lt;任务&gt;</code></td><td>完整流程：拆解 + 匹配 + 双审查 + 覆盖图（大小写均可）</td></tr>
+  <tr><td><code>用 LJC 找技能：&lt;任务&gt;</code></td><td>同上，说法更直白，歧义更小</td></tr>
+  <tr><td><code>有没有技能能做X？</code></td><td>直接检索模式：本地秒回，查不到自动转 GitHub / 市场搜</td></tr>
+  <tr><td><code>这个任务该怎么拆？</code></td><td>只要拆解，不检索</td></tr>
+</table>
+
+<div class="warn"><b>触发小坑</b>：「请ljc<b>为我</b>指点迷津」里的「为我」偶尔会被理解成「用户在向助手本人求教」而错过加载。
+如果没触发，换「用 LJC 找技能：&lt;任务&gt;」这种说法，100% 能认。</div>
+
+<!-- ============ 4 命令详解 ============ -->
+<h2 id="s4"><span class="no">四、</span>命令详解</h2>
+<p>所有命令都在 <code>scripts/</code> 目录下，用 <code>python3</code> 运行。下面按使用频率从高到低讲。</p>
+
+<h3>4.1 <code>find.py query</code> —— 检索技能（最常用）</h3>
+<p>在<b>本地已装的技能</b>里按功能搜。中英文都行，支持口语（内置术语映射会把「画个图」扩展成 diagram 等英文词）。</p>
+<div class="term">
+  <div class="bar"><span class="dot r"></span><span class="dot y"></span><span class="dot g"></span><span class="title">终端 · 真实输出</span></div>
+  <pre><span class="p">$</span> python3 scripts/find.py query <span class="o">"把合同审查一遍"</span> --top 3
+
+查询「把合同审查一遍」→ 扩展检索词 9 个：16 个关键词命中
+ 检索方式：仅词袋 · 耗时 3ms
+
+ 1. [contract-review]  (来源:claude-legal-skill  得分:194)
+    Review legal contracts, NDAs, employment agreements...
+    命中: name~contract, desc~review, 覆盖3词+60
+
+ 2. [contract-review-pro]  (来源:contract-review-pro  得分:123)
+    专业合同审核 Skill：7步工作流、5类通用门禁+16个专项门禁…
+
+ 3. [light-review-rebuttal]  (得分:103) …</pre>
+</div>
+<table>
+  <tr><th style="width:90px">参数</th><th>说明</th></tr>
+  <tr><td><code>--top N</code></td><td>显示前 N 条（默认 5）</td></tr>
+  <tr><td><code>--json</code></td><td>输出 JSON（给程序或工作流用）</td></tr>
+</table>
+<div class="tip"><b>输出里的三分区要会看</b>：① 关键词命中（最相关）② 语义候选（可能相关）
+③ <b>「下载了，但没有注册」</b>——作者禁用了自动调用的技能，能看见但当前加载不到，会单独标出来。</div>
+
+<h3>4.2 <code>find.py suggest</code> —— 任务盘点</h3>
+<p>给一个任务描述，它把已装技能分成「<b>相关有用</b>」和「<b>本次用不到</b>」两栏——适合定期清理技能库、
+或接任务前先看看手头有什么牌。</p>
+<div class="term">
+  <div class="bar"><span class="dot r"></span><span class="dot y"></span><span class="dot g"></span><span class="title">终端</span></div>
+  <pre><span class="p">$</span> python3 scripts/find.py suggest <span class="o">"把申报书数据合规章节加工成评委友好版"</span></pre>
+</div>
+
+<h3>4.3 <code>find.py list / stats</code> —— 看库和看命中</h3>
+<p><code>list</code> 列出全部已索引技能；<code>stats</code> 看历史上哪些技能被检索命中最多、哪些从来没人用过（清理时的依据）。</p>
+<div class="term">
+  <div class="bar"><span class="dot r"></span><span class="dot y"></span><span class="dot g"></span><span class="title">终端 · 真实输出</span></div>
+  <pre><span class="p">$</span> python3 scripts/find.py stats
+
+LJC 命中统计 —— 历史 101 条记录
+── 命中次数 Top 10 ──
+  light-review-rebuttal    54 次
+  light-typesetting        52 次
+  customs-trade-compliance 40 次 …</pre>
+</div>
+
+<h3>4.4 <code>find.py doctor</code> —— 一键体检</h3>
+<p>出问题先跑它：检查索引新鲜度、断链、目录健康、网络通道、缓存状态，并给出修复建议（比如哪块缓存可以清）。</p>
+
+<h3>4.5 <code>github_search.py</code> —— GitHub 检索</h3>
+<p>本地没有的，去 GitHub 上找。<b>一次查询自动拆成「精准 AND + 宽召回 OR」两组搜索再合并重排</b>，多词长句也不会空手而归。</p>
+<div class="term">
+  <div class="bar"><span class="dot r"></span><span class="dot y"></span><span class="dot g"></span><span class="title">终端</span></div>
+  <pre><span class="p">$</span> python3 scripts/github_search.py <span class="o">"法律文书 信息抽取"</span>
+<span class="p">$</span> python3 scripts/github_search.py <span class="o">"diagram"</span> --catalog   <span class="c"># 搜技能目录合集</span>
+<span class="p">$</span> python3 scripts/github_search.py <span class="o">"pdf"</span> --mode both --limit 8</pre>
+</div>
+<div class="warn">未认证的 GitHub 搜索限额是 <b>10 次/分钟</b>，连续搜索可能撞限（会明确报错并告诉你几秒后恢复）。
+设置 <code>GITHUB_TOKEN</code> 环境变量可提到 30 次/分。</div>
+
+<h3>4.6 <code>web_search.py</code> —— Tavily 全网语义搜索（可选通道）</h3>
+<p>前三路都搜不到的冷门技能，用 AI 语义搜索引擎在<b>整个互联网</b>（博客、论文、独立开发者仓库）捞。
+结果自带相关度评分，中文任务也能捞到英文技能。</p>
+<div class="term">
+  <div class="bar"><span class="dot r"></span><span class="dot y"></span><span class="dot g"></span><span class="title">终端</span></div>
+  <pre><span class="p">$</span> python3 scripts/web_search.py --check          <span class="c"># 通道自检</span>
+<span class="p">$</span> python3 scripts/web_search.py <span class="o">"pdf to word"</span> --limit 8</pre>
+</div>
+<div class="warn">需要免费注册 Tavily（app.tavily.com，免费档约 1000 次/月）拿到 key。
+配置一条命令搞定，见 <a href="#faq-tavily">FAQ 第 5 条</a>。不配置也不影响其他通道。</div>
+
+<h3>4.7 <code>security_check.py</code> —— 安全检查（装技能前必跑）</h3>
+<p>装任何第三方技能之前，先让它过一遍：扫描脚本里的可执行风险、SKILL.md 里的提示词注入和凭证泄露。</p>
+<div class="term">
+  <div class="bar"><span class="dot r"></span><span class="dot y"></span><span class="dot g"></span><span class="title">终端 · 真实输出</span></div>
+  <pre><span class="p">$</span> python3 scripts/security_check.py owner/repo
+
+  [WARN ] SKILL.md 缺 description 字段   ← 提醒，人工看一眼
+  结论: <span class="o">WARN</span> —— 照常推荐，但附上警告由你定夺
+  <span class="c"># 三档结论：BLOCK（别装）/ WARN（可用但留意）/ PASS</span></pre>
+</div>
+
+<h3>4.8 <code>check_updates.py</code> —— 更新检测</h3>
+<p>一次性核对你装的技能有没有上游新版本（当前覆盖 36 个来源 / 115 个技能），列出哪些可升级。</p>
+
+<h3>4.9 进阶：<code>rerank</code> 精排 与 <code>eval</code> 评估集（维护者用）</h3>
+<p><code>find.py rerank "任务"</code> 生成候选清单和评分量尺，配合宿主模型逐条判分后用 <code>rerank apply</code> 回流——检索排序的精修手段。
+<code>eval/run_eval.py</code> 是 22 条中英口语用例的回归评估（<code>--save</code> 存基线、<code>--compare</code> 对比），
+改了检索逻辑后跑一次，防止检索质量退化。日常使用不需要碰这两个。</p>
+
+<!-- ============ 5 流程示例 ============ -->
+<h2 id="s5"><span class="no">五、</span>完整使用流程示例</h2>
+<p>以一个真实任务为例：「把 Word 版申报书转成 PDF 发给老师」。看 LJC 怎么走完全程。</p>
+
+<div class="fig">
+<svg viewBox="0 0 800 330" width="100%" role="img" xmlns="http://www.w3.org/2000/svg">
+  <defs><marker id="ar3" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+    <path d="M2 1L8 5L2 9" fill="none" stroke="#57606a" stroke-width="1.5"/></marker></defs>
+  <rect x="20" y="20" width="170" height="54" rx="9" fill="#eaf3fc" stroke="#0969da"/>
+  <text x="105" y="43" text-anchor="middle" font-size="13" font-weight="600" fill="#1f2328">① 触发</text>
+  <text x="105" y="62" text-anchor="middle" font-size="11" fill="#57606a">「用 LJC 找技能：docx转pdf」</text>
+  <rect x="230" y="20" width="170" height="54" rx="9" fill="#f6f8fa" stroke="#d0d7de"/>
+  <text x="315" y="43" text-anchor="middle" font-size="13" font-weight="600" fill="#1f2328">② 拆解</text>
+  <text x="315" y="62" text-anchor="middle" font-size="11" fill="#57606a">读结构 → 转换 → 保真检查</text>
+  <rect x="440" y="20" width="170" height="54" rx="9" fill="#f6f8fa" stroke="#d0d7de"/>
+  <text x="525" y="43" text-anchor="middle" font-size="13" font-weight="600" fill="#1f2328">③ 检索</text>
+  <text x="525" y="62" text-anchor="middle" font-size="11" fill="#57606a">本地 → GitHub → 市场 → 全网</text>
+  <rect x="610" y="105" width="170" height="54" rx="9" fill="#fff8e6" stroke="#9a6700"/>
+  <text x="695" y="128" text-anchor="middle" font-size="13" font-weight="600" fill="#1f2328">④ 双审查</text>
+  <text x="695" y="147" text-anchor="middle" font-size="11" fill="#57606a">安全尺 × 适用尺</text>
+  <rect x="330" y="105" width="170" height="54" rx="9" fill="#f6f8fa" stroke="#d0d7de"/>
+  <text x="415" y="128" text-anchor="middle" font-size="13" font-weight="600" fill="#1f2328">⑤ 覆盖图</text>
+  <text x="415" y="147" text-anchor="middle" font-size="11" fill="#57606a">技能 ↔ 子任务 对应关系</text>
+  <rect x="50" y="105" width="220" height="120" rx="9" fill="#fff" stroke="#d0d7de"/>
+  <text x="160" y="128" text-anchor="middle" font-size="12.5" font-weight="600" fill="#1f2328">产出（示例）</text>
+  <text x="64" y="150" font-size="11.5" fill="#1f2328">① 读结构 → [docx]〔直〕</text>
+  <text x="64" y="170" font-size="11.5" fill="#1f2328">② 转 PDF → [soffice 封装]〔改〕</text>
+  <text x="64" y="190" font-size="11.5" fill="#cf222e">③ 保真 → ⚠ 缺口：本机无 LibreOffice</text>
+  <text x="64" y="212" font-size="11" fill="#57606a">→ 建议：装 LO 或改走 WPS/Pages</text>
+  <text x="400" y="240" text-anchor="middle" font-size="12" fill="#57606a">按图执行 → 完成任务</text>
+  <path d="M190 47 L226 47" fill="none" stroke="#57606a" stroke-width="1.5" marker-end="url(#ar3)"/>
+  <path d="M400 47 L436 47" fill="none" stroke="#57606a" stroke-width="1.5" marker-end="url(#ar3)"/>
+  <path d="M610 60 Q660 80 682 101" fill="none" stroke="#57606a" stroke-width="1.5" marker-end="url(#ar3)"/>
+  <path d="M610 132 L504 132" fill="none" stroke="#57606a" stroke-width="1.5" marker-end="url(#ar3)"/>
+  <path d="M330 132 L274 132" fill="none" stroke="#57606a" stroke-width="1.5" marker-end="url(#ar3)"/>
+</svg>
+<p class="cap">图 3 · 五步流水线：触发 → 拆解 → 检索 → 双审查 → 覆盖图（缺口会用红色标出来，不糊弄）</p>
+</div>
+
+<div class="tip"><b>覆盖图怎么读</b>：每个子任务标注匹配结果——〔直〕直接使用（拿来就能干）、
+〔改〕改造适配（原理相近，稍加改造就能用，附改造要点）、〔参〕思路参考（只借方法论）；
+没有匹配的就是<b>缺口</b>，LJC 会如实标注并给替代路径，而不是硬凑。</div>
+
+<!-- ============ 6 FAQ ============ -->
+<h2 id="s6"><span class="no">六、</span>常见问题 FAQ</h2>
+
+<details id="faq-1"><summary>1. 搜不到某个我确定装了的技能？</summary>
+<div class="body">
+<p>九成是索引过期（新装的技能还没进索引）。跑一条命令重建：</p>
+<div class="term"><div class="bar"><span class="dot r"></span><span class="dot y"></span><span class="dot g"></span><span class="title">终端</span></div>
+<pre><span class="p">$</span> python3 scripts/find.py build</pre></div>
+<p>LJC 也有自愈机制（索引和磁盘对不上会自动重建），但手动 build 永远是最稳的兜底。
+重建后再用 <code>find.py list | grep 技能名</code> 确认它在不在库里。</p>
+</div></details>
+
+<details><summary>2. 用中文搜有结果，但总感觉差一点？</summary>
+<div class="body">
+<p>技巧三则：① 用<b>功能描述词</b>（「合同审查」「流程图」「记忆管理」），别用技能名；
+② <code>query</code> 是本地词袋检索 + 术语映射，冷门领域词可以自己加进 <code>scripts/ljc_terms.json</code>
+（参考同目录 <code>.example.json</code> 的格式，如 <code>"拆包": ["unpack", "asar"]</code>）；
+③ 本地搜不到就换通道：<code>github_search.py</code>、SkillHub、Tavily 一路往外扩。</p>
+</div></details>
+
+<details><summary>3. GitHub 搜索报「限额」错误？</summary>
+<div class="body">
+<p>未认证搜索限额 10 次/分钟，等一分钟自动恢复。要长期高频用：GitHub → Settings → Developer settings →
+Personal access tokens 生成一个 token（无需任何权限勾选），然后 <code>export GITHUB_TOKEN=ghp_xxx</code>
+（建议写进 <code>~/.zshrc</code>），限额提升到 30 次/分。</p>
+</div></details>
+
+<details><summary>4. WorkBuddy 市场里明明有某技能，为什么安装总失败？</summary>
+<div class="body">
+<p>实测规律（2026-10-27 验证）：<b>每装一个技能，安装前必须紧跟一次「包含该技能名的搜索」</b>——
+跟踪按名字记，隔了几轮对话就失效；另外<b>单条安装必成功，两条合并装会被拒</b>。
+搜索时用<b>描述性关键词</b>（如「记忆管家」「省token」），直接搜技能名反而返回空。</p>
+</div></details>
+
+<details id="faq-tavily"><summary>5. 怎么开启 Tavily 全网语义搜索？</summary>
+<div class="body">
+<p>① 到 <code>app.tavily.com</code> 免费注册（约 1000 次/月），Dashboard 复制 API Key；② 运行一键脚本：</p>
+<div class="term"><div class="bar"><span class="dot r"></span><span class="dot y"></span><span class="dot g"></span><span class="title">终端</span></div>
+<pre><span class="p">$</span> bash scripts/setup_tavily.sh <span class="o">&lt;粘贴你的 tvly-... key&gt;</span>
+<span class="c"># key 不想经过终端历史的话：先复制 key，再跑</span>
+<span class="p">$</span> bash scripts/setup_tavily.sh --clipboard</pre></div>
+<p>脚本会写入 <code>~/.zshrc</code> + 本地密钥文件（WorkBuddy 这类 GUI 应用读不到 .zshrc，文件通道才真正生效）、
+自检并实跑一次证明打通。跑完用 <code>web_search.py --check</code> 随时确认。</p>
+<p><b>安全提醒</b>：key 等同门锁钥匙，不要发到群里/贴进聊天记录；万一贴了，去 Dashboard 删掉重建一把即可（轮换比删除记录更彻底）。</p>
+</div></details>
+
+<details><summary>6. 「语义后端未启用」的提示是什么意思？要开吗？</summary>
+<div class="body">
+<p><b>不用开。</b>内置的词袋检索（关键词 + 术语映射 + TF-IDF）已经覆盖绝大多数场景且毫秒级响应；
+向量语义后端实测收益为负（22 条评估用例只多对了 1 条，却要 20 秒加载模型），所以默认关闭。
+真想试：<code>pip install sentence-transformers</code> 后 <code>export LJC_SEMANTIC=auto</code>，
+用 <code>find.py semantic</code> 自检，不想要了 <code>semantic --clear-cache</code> 一键清掉。</p>
+</div></details>
+
+<details><summary>7. 索引文件 index.json 要不要提交到 git？</summary>
+<div class="body">
+<p>不用，它在 <code>.gitignore</code> 里。任何人 clone 后第一次运行 <code>query</code> 会自动建索引（约 1 秒），零配置。</p>
+</div></details>
+
+<!-- ============ 7 注意事项 ============ -->
+<h2 id="s7"><span class="no">七、</span>注意事项与安全约定</h2>
+<table>
+  <tr><th style="width:150px">约定</th><th>内容</th></tr>
+  <tr><td><b>只读不装</b></td><td>LJC 默认只检索、只推荐，<b>不自动下载安装任何技能</b>。装不装永远由你拍板。</td></tr>
+  <tr><td><b>安全红线</b></td><td>安全检查结论为 <code>BLOCK</code> 的候选不推荐；<code>WARN</code> 的会附上警告由你定夺。装任何第三方技能前先跑 <code>security_check.py</code>。</td></tr>
+  <tr><td><b>不硬凑</b></td><td>零命中时 LJC 会直说「没有，最接近的是 X 但它其实做的是 Y」。把不确定说成确定，比没有答案更糟。</td></tr>
+  <tr><td><b>未注册 ≠ 没装</b></td><td>输出里「下载了，但没有注册」分区的技能：文件在磁盘上，但作者禁用了自动调用，当前会话加载不到。要用需手动处理。</td></tr>
+  <tr><td><b>成本纪律</b></td><td>本地检索毫秒级零成本；GitHub 通道注意限额；Tavily 有月度免费额度。简单任务（改错别字、查事实）不必走 LJC 完整流程——路由本身有成本。</td></tr>
+  <tr><td><b>密钥安全</b></td><td>Tavily key / GitHub token 只放环境变量或本地密钥文件，<b>永远不要发进群聊、聊天记录或提交到 git</b>。</td></tr>
+</table>
+
+<!-- ============ 8 速查 ============ -->
+<h2 id="s8"><span class="no">八、</span>附：命令速查表</h2>
+<table>
+  <tr><th style="width:46%">命令</th><th>干什么</th></tr>
+  <tr><td><code>python3 scripts/find.py query "任务"</code></td><td>本地检索技能（最常用）</td></tr>
+  <tr><td><code>python3 scripts/find.py suggest "任务"</code></td><td>任务盘点：相关 vs 用不到</td></tr>
+  <tr><td><code>python3 scripts/find.py list</code></td><td>列出全部已索引技能</td></tr>
+  <tr><td><code>python3 scripts/find.py stats</code></td><td>命中统计（清理技能库的依据）</td></tr>
+  <tr><td><code>python3 scripts/find.py doctor</code></td><td>一键体检，出问题先跑它</td></tr>
+  <tr><td><code>python3 scripts/find.py build</code></td><td>重建索引（搜不到就跑这条）</td></tr>
+  <tr><td><code>python3 scripts/find.py rerank "任务"</code></td><td>生成精排候选表（进阶）</td></tr>
+  <tr><td><code>python3 scripts/github_search.py "词"</code></td><td>GitHub 仓库 / 技能目录检索</td></tr>
+  <tr><td><code>python3 scripts/web_search.py "词"</code></td><td>Tavily 全网语义搜索（需 key）</td></tr>
+  <tr><td><code>python3 scripts/security_check.py owner/repo</code></td><td>技能安全检查（装前必跑）</td></tr>
+  <tr><td><code>python3 scripts/check_updates.py</code></td><td>检查已装技能的上游更新</td></tr>
+  <tr><td><code>python3 eval/run_eval.py</code></td><td>检索质量回归评估（维护者）</td></tr>
+</table>
+
+<h3>仓库文件一览</h3>
+<table>
+  <tr><th style="width:32%">路径</th><th>内容</th></tr>
+  <tr><td><code>scripts/</code></td><td>全部可执行脚本（find / github_search / web_search / security_check / check_updates / setup_tavily.sh）</td></tr>
+  <tr><td><code>SKILL.md</code></td><td>技能说明书本体（WorkBuddy 加载的就是它）</td></tr>
+  <tr><td><code>references/decomposition-template.md</code></td><td>任务拆解模板（L3 原子任务五要素）</td></tr>
+  <tr><td><code>eval/</code></td><td>评估集与基线（22 条用例）</td></tr>
+  <tr><td><code>tests/</code></td><td>单元测试（94 项）</td></tr>
+  <tr><td><code>docs/</code></td><td>本说明书与覆盖图示例</td></tr>
+</table>
+
+<footer>
+  LJC v2.2.0 · MIT License · github.com/LJC2519/Lumin-Job-Criterion<br>
+  本说明书生成于 2026-10-27，基于当版本实测输出编写
+</footer>
+
+</div>
+</body>
+</html>
