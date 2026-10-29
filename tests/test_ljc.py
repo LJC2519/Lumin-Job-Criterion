@@ -22,6 +22,7 @@ import find  # noqa: E402
 import github_search  # noqa: E402
 import security_check  # noqa: E402
 import web_search  # noqa: E402
+import market_search  # noqa: E402
 
 
 class TestExpandQuery(unittest.TestCase):
@@ -1105,6 +1106,126 @@ class TestSelfImproveDecide(unittest.TestCase):
     def test_improvement_reported(self):
         verdict = self.si.decide(base_deg=[19], degraded=[19], improved=[11, 16])
         self.assertIn("[11, 16]", verdict)
+
+
+class TestMarketSearch(unittest.TestCase):
+    """市场路（SkillHub）——零网络，只测解析/重排/分桶。"""
+
+    def test_parse_three_shells(self):
+        row = {"slug": "s1", "name": "n1", "description": "d", "score": 0.06}
+        for payload in ({"results": [row]}, {"data": [row]}, {"skills": [row]}):
+            got = market_search.parse_skillhub(payload)
+            self.assertEqual(len(got), 1)
+            self.assertEqual(got[0]["slug"], "s1")
+
+    def test_parse_uses_chinese_desc_first(self):
+        got = market_search.parse_skillhub({"results": [
+            {"slug": "a", "description": "english only", "description_zh": "中文描述"}]})
+        self.assertEqual(got[0]["desc"], "中文描述")
+
+    def test_parse_garbage_returns_empty(self):
+        self.assertEqual(market_search.parse_skillhub({"results": "oops"}), [])
+        self.assertEqual(market_search.parse_skillhub(None), [])
+
+    def test_parse_skillsh(self):
+        payload = {"skills": [{"id": "a/b/smart-ocr", "source": "a/b",
+                               "skillId": "smart-ocr", "name": "smart-ocr", "installs": 8616}]}
+        got = market_search.parse_skillsh(payload)
+        self.assertEqual(got[0]["src"], "skills.sh")
+        self.assertEqual(got[0]["installs"], 8616)
+        self.assertEqual(got[0]["desc"], "")
+        self.assertIn("smart-ocr", got[0]["install_cmd"])
+        self.assertTrue(got[0]["homepage"].startswith("https://www.skills.sh/s/"))
+
+    def test_parse_clawhub(self):
+        payload = {"results": [{"canonicalUrl": "/o/skills/x", "displayName": "X",
+                                "downloads": 912, "install": {"reference": "o/x"},
+                                "links": {"canonical": "/o/skills/x"},
+                                "metrics": {"rolling60DayInstalls": 3}}]}
+        got = market_search.parse_clawhub(payload)
+        self.assertEqual(got[0]["src"], "clawhub")
+        self.assertEqual(got[0]["slug"], "o/x")
+        self.assertEqual(got[0]["downloads"], 912)
+        self.assertTrue(got[0]["homepage"].startswith("https://clawhub.com/"))
+
+    def test_only_src_keeps_external_out_of_keyword_bucket(self):
+        """外部源无描述、重叠不可信，不得混进 SkillHub 的关键词区。"""
+        items = [
+            {"src": "skillhub", "slug": "sh-hit", "name": "sh-hit", "_ov": 2},
+            {"src": "skills.sh", "slug": "x/ocr", "name": "ocr", "_ov": 2},
+        ]
+        _, hit, _ = market_search.split_buckets(items, set(), only_src="skillhub")
+        self.assertEqual([i["slug"] for i in hit], ["sh-hit"])
+
+    def test_external_items_overlap_first_then_source_order(self):
+        """外部源：重叠>0 的提前，零重叠的保持源内序，库存一个不丢。"""
+        items = [
+            {"src": "skills.sh", "slug": "a", "name": "a", "_ord": 0, "_ov": 0},
+            {"src": "skills.sh", "slug": "b", "name": "b", "_ord": 1, "_ov": 0},
+            {"src": "skills.sh", "slug": "c", "name": "c", "_ord": 2, "_ov": 2},
+        ]
+        ext = market_search.external_items(items, [], skip_src="skillhub")
+        self.assertEqual([i["slug"] for i in ext], ["c", "a", "b"])
+
+    def test_dedupe_same_name_keeps_highest_installs(self):
+        """同一技能在两个发布源下 slug 不同、name 相同，只留安装量高的。"""
+        items = [
+            {"src": "skills.sh", "slug": "bytedance/x/doubao", "name": "doubao", "installs": 164},
+            {"src": "skills.sh", "slug": "skills.volces.com/doubao", "name": "doubao", "installs": 114},
+        ]
+        got = market_search.dedupe(items)
+        self.assertEqual(len(got), 1)
+        self.assertEqual(got[0]["installs"], 164)
+
+    def test_parse_sources(self):
+        self.assertEqual(market_search._parse_sources("all"), market_search.SOURCES)
+        self.assertEqual(market_search._parse_sources("skills.sh"), ("skills.sh",))
+        self.assertEqual(market_search._parse_sources("ClawHub"), ("clawhub",))
+        self.assertEqual(market_search._parse_sources("nope"), ())
+
+    def test_rerank_overlap_beats_raw_score(self):
+        """SkillHub 分数区分度失效，重排必须以关键词重叠为先。"""
+        items = [
+            {"slug": "high-score-irrelevant", "name": "multi-search-engine", "desc": "", "score": 0.99},
+            {"slug": "low-score-relevant", "name": "statute-lookup", "desc": "法条检索", "score": 0.05},
+        ]
+        ranked = market_search.rerank(items, market_search.query_tokens("法条检索"))
+        self.assertEqual(ranked[0]["slug"], "low-score-relevant")
+
+    def test_query_tokens_chinese_bigram(self):
+        toks = market_search.query_tokens("法条检索")
+        self.assertIn("法条", toks)
+        self.assertIn("条检", toks)
+
+    def test_dedupe_by_slug(self):
+        items = [{"slug": "x", "name": "X"}, {"slug": "x", "name": "X2"}, {"slug": "y", "name": "Y"}]
+        self.assertEqual([i["slug"] for i in market_search.dedupe(items)], ["x", "y"])
+
+    def test_split_buckets_marks_installed(self):
+        items = [
+            {"slug": "already", "name": "already", "score": 0.1, "_ov": 3},
+            {"slug": "new-hit", "name": "new-hit", "score": 0.1, "_ov": 2},
+            {"slug": "only-semantic", "name": "only-semantic", "score": 0.1, "_ov": 0},
+        ]
+        have, hit, sem = market_search.split_buckets(items, {"already"})
+        self.assertEqual([i["slug"] for i in have], ["already"])
+        self.assertEqual([i["slug"] for i in hit], ["new-hit"])
+        self.assertEqual([i["slug"] for i in sem], ["only-semantic"])
+
+    def test_zero_overlap_never_in_keyword_bucket(self):
+        """高频无关技能不得混进主卡区。"""
+        items = [{"slug": "tencent-docs", "name": "tencent-docs", "score": 0.9, "_ov": 0}]
+        _, hit, sem = market_search.split_buckets(items, set())
+        self.assertEqual(hit, [])
+        self.assertEqual(len(sem), 1)
+
+    def test_installed_but_irrelevant_dropped(self):
+        """已装且零重叠的不能占已装区（实测查「法条检索」时 libai 混进来）。"""
+        items = [{"slug": "libai", "name": "libai", "score": 0.04, "_ov": 0}]
+        have, hit, sem = market_search.split_buckets(items, {"libai"})
+        self.assertEqual(have, [])
+        self.assertEqual(hit, [])
+        self.assertEqual(sem, [])
 
 
 if __name__ == "__main__":

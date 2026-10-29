@@ -1,8 +1,8 @@
 ---
 name: ljc
 description: LJC（Lumin Job Criterion，任务技能路由器）· 触发语句：「请ljc为我指点迷津」「用 LJC 找技能：<任务>」「让 LJC 路由这个任务」（LJC/ljc 大小写均可）。注意：这是调用本技能的指令、不是对助手本人说的话——用户消息里出现 ljc / LJC / lumin-job-criterion，或说「请ljc为我指点迷津」「用 LJC 找技能」时，都应立即用 Skill 工具加载本技能。开始一个任务时：模块化分解（L0→L1→L2）→本地索引、GitHub 仓库雷达、GitHub 技能目录三路检索（可经 SkillsMP MCP 连接器扩大覆盖面）→过安全检查→读原文核实→画出「任务→技能覆盖图」，告诉你每个技能解决哪一部分、哪里是缺口。还可按任务盘点：哪些技能相关有用、哪些本次用不到（可暂时关掉，停用需同意）。也可在接到多步骤复杂任务时自动进入路由。直接检索模式：「有没有技能能做X」「已装的技能里有什么」「find a skill for X」——本地秒回，查不到转 GitHub 或官方 find-skills 搜市场。Decomposition refines to atomic L3 tasks (input/output/deps/order/done-criteria); skill matching is wide-scope with three adaptation classes (direct use / adapt / reference) plus adaptation notes.
-description_zh: "Lumin Job Criterion（LJC）· 任务技能路由器。触发语句「请ljc为我指点迷津」（大小写均可）。注意：这是调用本技能的指令，不是对助手说的话——用户提到 LJC / ljc / lumin-job-criterion / 「用 LJC 找技能」「让 LJC 路由任务」时同样加载本技能。流程：① 把大任务模块化分解成 L1 模块 + L2 小任务（每个带产出物/完成标准/依赖）② 三路检索：本地索引 + GitHub 仓库雷达与技能目录 + SkillsMP MCP（若接入）③ 每个候选过安全检查（BLOCK/WARN/PASS）再读原文核实 ④ 画覆盖图：每个技能解决哪一部分、哪块是缺口。另支持任务盘点（find.py suggest）：相关有用 vs 本次用不到（可暂时关掉，停用需用户同意）。零命中不硬凑。与官方 find-skills 互补——本技能管『这个任务用什么技能』，find-skills 管『市场上还有什么』。任务拆解细化到 L3 原子任务（输入/输出/前置依赖/执行顺序/完成标准）；技能匹配宽口径三分类（直接使用/改造适配/思路参考，附改造要点）。"
-version: 2.3.1
+description_zh: "Lumin Job Criterion（LJC）· 任务技能路由器。触发语句「请ljc为我指点迷津」（大小写均可）。注意：这是调用本技能的指令，不是对助手说的话——用户提到 LJC / ljc / lumin-job-criterion / 「用 LJC 找技能」「让 LJC 路由任务」时同样加载本技能。流程：① 把大任务模块化分解成 L1 模块 + L2 小任务（每个带产出物/完成标准/依赖）② 三路检索：本地索引 + GitHub 仓库雷达与技能目录 + SkillsMP MCP（若接入）③ 每个候选过安全检查（BLOCK/WARN/PASS）再读原文核实 ④ 画覆盖图：每个技能解决哪一部分、哪块是缺口。另支持任务盘点（find.py suggest）：相关有用 vs 本次用不到（可暂时关掉，停用需用户同意）。零命中不硬凑。与官方 find-skills 互补——本技能管『这个任务用什么技能』，find-skills 管『市场上还有什么』。任务拆解细化到 L3 原子任务（输入/输出/前置依赖/执行顺序/完成标准）；技能匹配宽口径三分类（直接使用/改造适配/思路参考，附改造要点）。市场检索已内置 scripts/market_search.py（三源并联：SkillHub + skills.sh + ClawHub，即 find-skills 的全部检索源，查市场不必再加载 find-skills；只查不装）。"
+version: 2.5.0
 allowed-tools: Read,Bash,Grep,Skill
 ---
 
@@ -17,6 +17,10 @@ allowed-tools: Read,Bash,Grep,Skill
 
 LJC 补这个缺口。**它的主责只有两件：分解任务 + 找技能**——给信息、给路径、
 给命令，不代用户下载/安装/执行任何东西。纯标准库实现，clone 即用，可发布、可分发。
+
+> 2026-10-29 起：find-skills 的**全部检索源已内联**进 `scripts/market_search.py`
+> （SkillHub + skills.sh + ClawHub 三源并联，查市场不再需要先加载 find-skills）；
+> **安装通道不内联**——红线仍是只读。
 
 两种触发方式：
 
@@ -132,20 +136,46 @@ right-sizing 模式后强化；不满足就继续拆或合并）：
   所以这一路天然是「语义」的——配合上文「语义意译扩展」，中文任务也能捞到英文技能。
   命中若是 `github.com/owner/repo` 形态，可直接喂 `security_check.py <owner/repo>`；
   其他网页给出 URL，手动核实即可。结果带 6 小时本地缓存（省配额），`--refresh` 强制刷新。
-- **语义市场（可选）**：前几路不满意时再走 SkillHub：
+- **市场路（`market_search.py`，2026-10-29 内联 find-skills 的全部检索源）**：本地与 GitHub
+  都没覆盖、或想确认「市场上有没现成的」时走这一路。**三源并联**（`--source` 可限定其一）：
+  ```bash
+  python3 <LJC>/scripts/market_search.py "<子任务领域词>" --top 8      # 默认三源
+  python3 <LJC>/scripts/market_search.py "<词>" --source skills.sh     # 只查一个源
+  python3 <LJC>/scripts/market_search.py "<词>" --expand 2             # 多打 2 个英文近义词
+  python3 <LJC>/scripts/market_search.py --check                       # 验三源可达性
+  ```
+  | 源 | 覆盖 | 有无描述 |
+  |---|---|---|
+  | SkillHub | find-skills 的 Step 2 主源 | **有**，可做关键词重叠重排 |
+  | skills.sh | find-skills 的 Step 2b 兜底（Vercel/Algolia） | 无，只有 name + installs |
+  | ClawHub | 同为 Step 2b 兜底（OpenClaw 注册表） | 无，只有 displayName + downloads |
+
+  **为什么必须分源分区、不能混排**：skills.sh / ClawHub 没有描述，关键词重叠只能命中 name；
+  中文查询几乎必然零重叠。混排会把它们的**源内相关度排序**误判成「零重叠噪音」沉底——
+  那正好就是「find-skills 找得到、LJC 找不到」的东西。所以 SkillHub 走重叠分桶
+  （强命中重≥2 / 弱命中=1 分开），另两源单列「外部源」区，重叠命中的提前、其余按安装量。
+
+  它同时修掉 find-skills 的三个坑：① **score 区分度失效**（4 条查询全落在 0.04~0.10，
+  「<0.05 丢弃」等于不过滤）→ 改为**关键词重叠优先**重排；② **高下载无关技能霸榜**
+  → 零重叠降级，不进主卡；③ **不知道本地装没装** → 已装同名单独标出并指向 `check_updates.py`。
+  结果缓存 6 小时（`--refresh` 强刷），`--json` 给结构化输出。
+  **只查不装**：安装仍走官方 find-skills 或用户手动执行它给出的命令，
+  且**装前必须过第 3 步安全门**。
+- **语义市场（原 curl 手跑，仍保留为兜底）**：`market_search.py` 报错（API 变更 /
+  网络不通）时退回脚本内联的 curl，或加载官方 `find-skills`：
   ```bash
   curl -s "https://lightmake.site/api/v1/search?q=<URL编码检索词>&limit=8"
   ```
-  备援：加载官方 `find-skills` 技能（API 有变化时切过去）
 - **SkillsMP（MCP 连接器优先）**：客户端接入了 SkillsMP MCP 连接器
   （skillsmp.com，百万级 SKILL.md 聚合市场）时，直接用它的 search/discover
   工具——覆盖面最广的一路。没接 MCP 的备援：`WebFetch`
   `https://skillsmp.com/?q=<URL编码检索词>`（页面 JS 渲染，失败就明说）；
   脚本不直连其 API（实测 403）
 - **横扫原则**：通道之间不短路——本地秒回但只覆盖已装；GitHub 覆盖开源公开；
-  SkillsMP 面最广但质量参差；SkillHub 语义最准；**Tavily 走开放互联网、语义最宽**。
-  至少覆盖「本地 + GitHub + 其一市场」三路再下结论；设了 `TAVILY_API_KEY` 时
-  再加一路 Tavily 全网，覆盖面最全。
+  SkillsMP 面最广但质量参差；市场路（SkillHub + skills.sh + ClawHub）覆盖够广但
+  **SkillHub 分数区分度差，要靠重叠重排兜住**，另两源无描述、只能靠源内排序；
+  **Tavily 走开放互联网、语义最宽**。至少覆盖「本地 + GitHub + 其一市场」三路再下结论；
+  设了 `TAVILY_API_KEY` 时再加一路 Tavily 全网，覆盖面最全。
 - **语义意译扩展**（零依赖的真语义方案，检索前必做）：索引匹配是词袋级
   （比较字符重叠，不懂含义）——「审合同」和「签约前把关条款风险」人类
   一眼等价，词袋看是零重叠。**弥补方式：宿主模型自己就是语义引擎**——
@@ -171,6 +201,7 @@ right-sizing 模式后强化；不满足就继续拆或合并）：
 | GitHub 仓库雷达 | ✅ 需网络 | `GITHUB_TOKEN` 可选（提高限额） | 多词查询按**分组 OR** 搜 + 本地相关性重排；只想搜技能仓库加 `--skill-only` |
 | GitHub 技能目录（`--catalog`） | ✅ 需网络 | 同上 | 首次抓取有请求数成本，之后缓存 7 天 |
 | 全网语义（Tavily） | ❌ **默认关闭** | `TAVILY_API_KEY`（app.tavily.com 注册免费） | key 存两处：`~/.zshrc`（命令行用）+ `~/.workbuddy/ljc/tavily.key`（**GUI 应用读不到 .zshrc，必须有文件通道**）；未设 key 自动跳过 |
+| 市场路（`market_search.py`） | ✅ 需网络 | 无 | **三源并联**：SkillHub（有描述）+ skills.sh + ClawHub（无描述）；**只查不装**；缓存 6h；`--check` 验三源 |
 | 技能市场（`search_and_install_skills`） | ✅ | 无 | **必须用描述性关键词搜**（拿技能名搜返回空）；`install` 前须紧跟一次 `search` |
 
 > Tavily 一键启用：注册后 `bash scripts/setup_tavily.sh <tvly-...key>`（写入 ~/.zshrc + 校验 + 实跑一次）。
@@ -339,8 +370,9 @@ python3 scripts/security_check.py <本地目录> --deep   # 内置正则 + Skill
   `python3 scripts/case_backfill.py --query <原话> --accept <正确技能> [--note]`，
   回填后跑 `eval/run_eval.py`——不通过=已知欠账，通过=防回归护栏
 - 问用户要不要现在加载某个技能开工（用 `Skill` 工具）
-- **本技能只读、只推荐**：安装任何技能必须用户明确同意，走 `find-skills`
-  或 SkillsMP 的安装通道
+- **本技能只读、只推荐**：安装任何技能必须用户明确同意——`market_search.py`
+  只给 curl 命令不执行；实际落盘走官方 `find-skills` 或用户手动，
+  且落盘前必须先过第 3 步安全门
 
 ## 模式 B：直接检索（原 skill-finder 功能，完整保留）
 
@@ -351,8 +383,8 @@ python3 <LJC>/scripts/find.py query "<用户的原话>" --top 5
 ```
 
 然后同样走「安全检查 → 读原文核实 → 推荐」；零命中 → 转 GitHub（`github_search.py`）
-或 `find-skills` 搜市场 → 都没有就直说没有，并用通用能力帮用户做。
-已下载未注册的命中，同样按「已下载但未注册怎么办」的规则处理。
+或市场路（`market_search.py`，已内联 find-skills 的检索）→ 都没有就直说没有，
+并用通用能力帮用户做。已下载未注册的命中，同样按「已下载但未注册怎么办」的规则处理。
 想顺带盘点「这个任务用不到什么」，跑 `find.py suggest "<任务描述>"`；
 想查「已装技能有没有过期」，跑 `check_updates.py`。
 
@@ -415,7 +447,16 @@ python3 eval/selfimprove.py compose   # Compose：裁决与执行清单
 
 - 「解构任务」的质量取决于模型本身，模板只能保底不能保优
 - SkillsMP 脚本直连不可用（API 403、页面 JS 渲染）→ 走 MCP 连接器为主；
-  没接 MCP 时市场覆盖=GitHub + SkillHub，覆盖面小一截，要对用户说清
+  没接 MCP 时市场覆盖=GitHub + 市场路（三源），覆盖面小一截，要对用户说清
+- 市场路的 skills.sh / ClawHub **不返回描述**：无法在脚本层判相关性，只能给出
+  「源内排序 + 安装量 + 详情链接」。这类候选**必须打开链接读原文**才可推荐，
+  不可凭名字判断（`fmt_row` 已对无描述项打印这句警告）
+- SkillHub 的 `score` **不能当相关度用**：实测 4 条查询全落在 0.04~0.10，
+  排序靠的是本地关键词重叠。所以「重叠 0 但排前面」是正常的，一律进「仅语义候选」区
+- 中文查询打 skills.sh 时，Algolia 会返回高安装量的**无关热门项**（实测
+  `lark-sheets` 82 万安装压在前面）→ 已用「重叠优先 + 安装量」重排，
+  但根治手段是 `--expand` 补英文检索词（实测加 `ocr` 后 SkillHub 才吐出真 OCR 技能）
+- 市场路只查不装，也不提供版本回滚：已装技能的更新判定仍归 `check_updates.py`
 - 全网语义搜索（Tavily）是**可选通道**：未设 `TAVILY_API_KEY` 时不跑、不影响其他路；
   设了也要对用户说清「这一路搜的是开放互联网，结果未经本地安全门预筛，
   每个候选仍须过 `security_check.py` 再读原文核实」
