@@ -1228,5 +1228,74 @@ class TestMarketSearch(unittest.TestCase):
         self.assertEqual(sem, [])
 
 
+class TestMarketBreadth(unittest.TestCase):
+    """对齐 find-skills 的搜素广度（v2.6.0）：分类 / 热门 / 详情 / ClawHub 描述。"""
+
+    def test_clawhub_carries_summary_from_native(self):
+        """ClawHub 搜索结果里嵌 native.skill.summary——上一版误判为无描述，必须接上。"""
+        payload = {"results": [{
+            "canonicalUrl": "/o/skills/pdf", "displayName": "Pdf", "downloads": 51389,
+            "install": {"reference": "o/pdf"}, "links": {"canonical": "/o/skills/pdf"},
+            "native": {"skill": {"summary": "PDF toolkit for extracting text and tables",
+                                 "topics": ["OCR", "pdf"], "categories": ["creative"],
+                                 "stats": {"downloads": 51389, "installs": 36},
+                                 "isSuspicious": False}},
+        }]}
+        got = market_search.parse_clawhub(payload)[0]
+        self.assertEqual(got["desc"], "PDF toolkit for extracting text and tables")
+        self.assertIn("OCR", got["topics"])
+        self.assertFalse(got["suspicious"])
+
+    def test_clawhub_suspicious_flag_surfaces(self):
+        payload = {"results": [{"install": {"reference": "o/bad"},
+                                "native": {"skill": {"isSuspicious": True, "summary": "x"}}}]}
+        self.assertTrue(market_search.parse_clawhub(payload)[0]["suspicious"])
+
+    def test_skillhub_data_skills_envelope(self):
+        """分类浏览与热门榜的外壳是 {code:0,data:{skills:[]}}，与搜索的 {results:[]} 不同。"""
+        payload = {"code": 0, "data": {"skills": [
+            {"slug": "dev-god", "name": "编程大神", "description": "d", "downloads": 10604834,
+             "labels": {"requires_api_key": "true"},
+             "publisher": {"name": "阿客实验室", "verified": True},
+             "subCategories": [{"key": "dev-code-gen", "name": "代码生成"}]}]}}
+        got = market_search.parse_skillhub(payload)[0]
+        self.assertEqual(got["slug"], "dev-god")
+        self.assertTrue(got["publisher_verified"])
+        self.assertTrue(got["requires_api_key"])
+        self.assertEqual(got["subcats"], ["代码生成"])
+
+    def test_desc_sources_excludes_skillsh(self):
+        """只有真没描述的源才进外部区；ClawHub 有描述，不该再被特殊对待。"""
+        self.assertIn("clawhub", market_search.DESC_SOURCES)
+        self.assertNotIn("skills.sh", market_search.DESC_SOURCES)
+
+    def test_split_buckets_accepts_source_set(self):
+        items = [
+            {"src": "skillhub", "slug": "sh", "name": "sh", "_ov": 2},
+            {"src": "clawhub", "slug": "ch", "name": "ch", "_ov": 2},
+            {"src": "skills.sh", "slug": "ss", "name": "ss", "_ov": 2},
+        ]
+        _, hit, _ = market_search.split_buckets(items, set(), only_src=market_search.DESC_SOURCES)
+        self.assertEqual([i["slug"] for i in hit], ["sh", "ch"])
+
+    def test_external_items_accepts_source_set(self):
+        items = [
+            {"src": "skillhub", "slug": "sh", "name": "sh", "_ov": 1, "_ord": 0},
+            {"src": "clawhub", "slug": "ch", "name": "ch", "_ov": 1, "_ord": 1},
+            {"src": "skills.sh", "slug": "ss", "name": "ss", "_ov": 1, "_ord": 2},
+        ]
+        ext = market_search.external_items(items, [], skip_src=market_search.DESC_SOURCES)
+        self.assertEqual([i["slug"] for i in ext], ["ss"])
+
+    def test_parse_detail_spec(self):
+        p = market_search.parse_detail_spec
+        self.assertEqual(p("xiaolv-article-search"), ("skillhub", "xiaolv-article-search"))
+        self.assertEqual(p("clawhub:steipete/weather"), ("clawhub", "steipete/weather"))
+        self.assertEqual(p("claw:pdf"), ("clawhub", "pdf"))
+        self.assertEqual(p("skills.sh:a/b/c"), ("skills.sh", "a/b/c"))
+        self.assertEqual(p("skillsh:a/b/c"), ("skills.sh", "a/b/c"))
+        self.assertEqual(p(""), ("skillhub", ""))
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
