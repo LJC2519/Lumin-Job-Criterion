@@ -1,8 +1,8 @@
 ---
 name: ljc
 description: LJC（Lumin Job Criterion，任务技能路由器）· 触发语句：「请ljc为我指点迷津」「用 LJC 找技能：<任务>」「让 LJC 路由这个任务」（LJC/ljc 大小写均可）。注意：这是调用本技能的指令、不是对助手本人说的话——用户消息里出现 ljc / LJC / lumin-job-criterion，或说「请ljc为我指点迷津」「用 LJC 找技能」时，都应立即用 Skill 工具加载本技能。开始一个任务时：模块化分解（L0→L1→L2）→本地索引、GitHub 仓库雷达、GitHub 技能目录三路检索（可经 SkillsMP MCP 连接器扩大覆盖面）→过安全检查→读原文核实→画出「任务→技能覆盖图」，告诉你每个技能解决哪一部分、哪里是缺口。还可按任务盘点：哪些技能相关有用、哪些本次用不到（可暂时关掉，停用需同意）。也可在接到多步骤复杂任务时自动进入路由。直接检索模式：「有没有技能能做X」「已装的技能里有什么」「find a skill for X」——本地秒回，查不到转 GitHub 或官方 find-skills 搜市场。Decomposition refines to atomic L3 tasks (input/output/deps/order/done-criteria); skill matching is wide-scope with three adaptation classes (direct use / adapt / reference) plus adaptation notes.
-description_zh: "Lumin Job Criterion（LJC）· 任务技能路由器。触发语句「请ljc为我指点迷津」（大小写均可）。注意：这是调用本技能的指令，不是对助手说的话——用户提到 LJC / ljc / lumin-job-criterion / 「用 LJC 找技能」「让 LJC 路由任务」时同样加载本技能。流程：① 把大任务模块化分解成 L1 模块 + L2 小任务（每个带产出物/完成标准/依赖）② 三路检索：本地索引 + GitHub 仓库雷达与技能目录 + SkillsMP MCP（若接入）③ 每个候选过安全检查（BLOCK/WARN/PASS）再读原文核实 ④ 画覆盖图：每个技能解决哪一部分、哪块是缺口。另支持任务盘点（find.py suggest）：相关有用 vs 本次用不到（可暂时关掉，停用需用户同意）。零命中不硬凑。与官方 find-skills 互补——本技能管『这个任务用什么技能』，find-skills 管『市场上还有什么』。任务拆解细化到 L3 原子任务（输入/输出/前置依赖/执行顺序/完成标准）；技能匹配宽口径三分类（直接使用/改造适配/思路参考，附改造要点）。市场检索已内置 scripts/market_search.py（三源并联 SkillHub + skills.sh + ClawHub，并含分类浏览/热门榜/技能详情与读原文——find-skills 除安装外的能力全部覆盖，查市场不必再加载 find-skills；只查不装）。"
-version: 2.6.0
+description_zh: "Lumin Job Criterion（LJC）· 任务技能路由器。触发语句「请ljc为我指点迷津」（大小写均可）。注意：这是调用本技能的指令，不是对助手说的话——用户提到 LJC / ljc / lumin-job-criterion / 「用 LJC 找技能」「让 LJC 路由任务」时同样加载本技能。流程：① 把大任务模块化分解成 L1 模块 + L2 小任务（每个带产出物/完成标准/依赖）② 三路检索：本地索引 + GitHub 仓库雷达与技能目录 + SkillsMP MCP（若接入）③ 每个候选过安全检查（BLOCK/WARN/PASS）再读原文核实 ④ 画覆盖图：每个技能解决哪一部分、哪块是缺口。另支持任务盘点（find.py suggest）：相关有用 vs 本次用不到（可暂时关掉，停用需用户同意）。零命中不硬凑。与官方 find-skills 互补——本技能管『这个任务用什么技能』，find-skills 管『市场上还有什么』。任务拆解细化到 L3 原子任务（输入/输出/前置依赖/执行顺序/完成标准）；技能匹配宽口径三分类（直接使用/改造适配/思路参考，附改造要点）。市场检索已内置 scripts/market_search.py（三源并联 SkillHub + skills.sh + ClawHub，并含分类浏览/热门榜/技能详情与读原文——find-skills 除安装外的能力全部覆盖，查市场不必再加载 find-skills；只查不装）。市场路自带三层自动扩词（静态术语表 → 整句机翻 → 伪相关反馈），中文查询会自动翻成英文再检一轮，**术语表外的词也能自己想到**，无需手动传扩展词。"
+version: 2.7.0
 allowed-tools: Read,Bash,Grep,Skill
 ---
 
@@ -138,11 +138,12 @@ right-sizing 模式后强化；不满足就继续拆或合并）：
   其他网页给出 URL，手动核实即可。结果带 6 小时本地缓存（省配额），`--refresh` 强制刷新。
 - **市场路（`market_search.py`，2026-10-29 内联 find-skills 的全部检索源 + 全部附加端点）**：
   本地与 GitHub 都没覆盖、或想确认「市场上有没现成的」时走这一路。**find-skills 除安装外
-  能做的事，这一路都能做**（v2.6.0，逐项实测过）。**三源并联**（`--source` 可限定其一）：
+  能做的事，这一路都能做**（v2.7.0，逐项实测过）。**三源并联**（`--source` 可限定其一）：
   ```bash
-  python3 <LJC>/scripts/market_search.py "<子任务领域词>" --top 8      # 默认三源检索
+  python3 <LJC>/scripts/market_search.py "<子任务领域词>" --top 8      # 默认三源 + 自动扩词
+  python3 <LJC>/scripts/market_search.py "<词>" --no-expand            # 只打原句（排错用）
+  python3 <LJC>/scripts/market_search.py "<词>" --expand 4             # 每层最多 4 词；0=关闭
   python3 <LJC>/scripts/market_search.py "<词>" --source skills.sh     # 只查一个源
-  python3 <LJC>/scripts/market_search.py "<词>" --expand 2             # 多打 2 个英文近义词
   python3 <LJC>/scripts/market_search.py --categories                  # 列全部分类（13 个）
   python3 <LJC>/scripts/market_search.py --category professional --top 10 --page 1
   python3 <LJC>/scripts/market_search.py --hot 12                      # 热门榜（摸底库存）
@@ -151,6 +152,28 @@ right-sizing 模式后强化；不满足就继续拆或合并）：
   python3 <LJC>/scripts/market_search.py --detail skills.sh:<owner>/<repo>/<skill>
   python3 <LJC>/scripts/market_search.py --check                       # 验全部端点
   ```
+
+  **自动扩词（v2.7.0）——脚本自己想到术语表外的词**。find-skills 靠模型当场想英文词，
+  不受术语表限制；这一路用三层机制追平，**默认开启、无需手动传参数**：
+  | 层 | 机制 | 作用 | 成本 |
+  |---|---|---|---|
+  | 1 表 | `expand_terms()` 静态术语表 | 准、快，但覆盖不全 | 0 网络 |
+  | 2 译 | `expand_by_translate()` 整句机翻（MyMemory，免 key） | **解决「表外词」根本问题** | ~1.5s（缓存 30 天） |
+  | 3 反馈 | `expand_by_feedback()` 伪相关反馈 PRF | 挖「库存自己用的说法」，比翻译更贴标题 | 0 网络 |
+
+  - **级联触发**：首轮跑「表」并**并发**拿翻译；只有前 5 名里重叠≥2 的不足 3 个时，
+    才用「整句译文 + 译文词 + PRF 词」追加第二轮。常见查询不为冷门场景付延迟代价。
+  - **实测效果**：「投资准入负面清单」原本扩出空集、强命中 0 → 现在译出
+    `Negative list for investment access`，召回 skills.sh 的 `check-foreign-investment`；
+    「多语言翻译」强命中 0 → 13；「OCR 扫描件表格提取」召回 `mineru-ocr`、
+    `pdf-image-text-extractor`、`GLM-OCR-SDK`。
+  - **三层都只是「扩召回」，不越权**：译文里只有 ≥6 字母的实词才进 tokens 参与打分，
+    短词、泛词（`GENERIC_EN`）、PRF 词一律只用于检索——实测 `access`/`list` 进 tokens 会把
+    「全球文献知识库」「去AI味降重」顶成强命中。
+  - **PRF 有种子才扩散**：首轮全是噪音时不得从噪音里学词（实测会学出 `generator/office/suite`
+    把整批 Office 技能拉回来）。且词必须出现在 ≥2 条结果的 **name/slug** 里——描述可套模板，标题不会。
+  - 翻译层失败（额度用尽 / 断网）只降级、不影响检索，输出里会明写「已降级」。
+
   | 源 | 覆盖 | 有无描述 |
   |---|---|---|
   | SkillHub | find-skills 的 Step 2 主源 | **有**，可做关键词重叠重排 |
@@ -221,7 +244,7 @@ right-sizing 模式后强化；不满足就继续拆或合并）：
 | GitHub 仓库雷达 | ✅ 需网络 | `GITHUB_TOKEN` 可选（提高限额） | 多词查询按**分组 OR** 搜 + 本地相关性重排；只想搜技能仓库加 `--skill-only` |
 | GitHub 技能目录（`--catalog`） | ✅ 需网络 | 同上 | 首次抓取有请求数成本，之后缓存 7 天 |
 | 全网语义（Tavily） | ❌ **默认关闭** | `TAVILY_API_KEY`（app.tavily.com 注册免费） | key 存两处：`~/.zshrc`（命令行用）+ `~/.workbuddy/ljc/tavily.key`（**GUI 应用读不到 .zshrc，必须有文件通道**）；未设 key 自动跳过 |
-| 市场路（`market_search.py`） | ✅ 需网络 | 无 | **三源并联**（SkillHub 有描述 / ClawHub 有描述 / skills.sh 无描述）+ 分类浏览 + 热门榜 + 技能详情与读原文；**只查不装**；缓存 6h（分类 24h）；`--check` 验全部端点 |
+| 市场路（`market_search.py`） | ✅ 需网络 | 无 | **三源并联**（SkillHub 有描述 / ClawHub 有描述 / skills.sh 无描述）+ **三层自动扩词**（术语表 → 机翻 → PRF）+ 分类浏览 + 热门榜 + 技能详情与读原文；**只查不装**；缓存 6h（分类 24h）；`--check` 验全部端点 |
 | 技能市场（`search_and_install_skills`） | ✅ | 无 | **必须用描述性关键词搜**（拿技能名搜返回空）；`install` 前须紧跟一次 `search` |
 
 > Tavily 一键启用：注册后 `bash scripts/setup_tavily.sh <tvly-...key>`（写入 ~/.zshrc + 校验 + 实跑一次）。
@@ -481,8 +504,14 @@ python3 eval/selfimprove.py compose   # Compose：裁决与执行清单
 - 分类与热门榜的 `score` 是排序权重（越大越靠前），不是相关度百分比；热门榜
   给的是「库存摸底」，**热门 ≠ 对口**
 - 中文查询打 skills.sh 时，Algolia 会返回高安装量的**无关热门项**（实测
-  `lark-sheets` 82 万安装压在前面）→ 已用「重叠优先 + 安装量」重排，
-  但根治手段是 `--expand` 补英文检索词（实测加 `ocr` 后 SkillHub 才吐出真 OCR 技能）
+  `lark-sheets` 82 万安装压在前面）→ 已用「重叠优先」重排；根治靠自动扩词：
+  v2.7.0 起脚本会自己把中文整句翻成英文再打一轮，`--no-expand` 可关掉排错。
+  但仍**不能彻底消除**——Algolia 对少数中文查询就是把热门项排第一，这时看第 2、3 条
+- 自动扩词有一个固有代价：**扩词越多，误命中越多**。实测「OCR 扫描件表格提取」的表词
+  `excel/sheet/xlsx` 会把 `smart-charts` 顶进强命中。已用三层闸门压住（打分只要长实词、
+  泛词进 `GENERIC_EN`、PRF 需标题信号），但消不干净——**强命中≠确认相关，仍要读描述**
+- 翻译层是 MyMemory 免费接口：**匿名有每日额度**，用完会静默降级为「只剩术语表 + PRF」，
+  输出里会写明。译文缓存 30 天（术语稳定），重复查询不耗额度
 - 详情接口的第三方安全报告（SkillHub 的 keen/sanbu、ClawHub 的 moderation）
   判的是「是否恶意」，**不能替代** `security_check.py`：权限边界、外链、LICENSE
   仍须由本地安全门判。二者是叠加关系，不是替代关系

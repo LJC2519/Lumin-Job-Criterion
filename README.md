@@ -26,7 +26,8 @@ python3 scripts/find.py query "convert word documents" --top 8   # search instal
 python3 scripts/find.py suggest "your task description"          # relevant vs not-needed audit
 python3 scripts/github_search.py "skill router"                  # GitHub repo radar
 python3 scripts/github_search.py "diagram" --catalog             # four skill catalogs
-python3 scripts/market_search.py "法条检索" --top 8                # three registries (read-only)
+python3 scripts/market_search.py "法条检索" --top 8                # three registries + auto query expansion
+python3 scripts/market_search.py "法条检索" --no-expand            # raw query only (debugging)
 python3 scripts/market_search.py --categories                    # browse: 13 categories
 python3 scripts/market_search.py --category professional --top 10
 python3 scripts/market_search.py --hot 12                        # most downloaded
@@ -61,6 +62,8 @@ LJC 把「找技能」从碰运气变成流水线：
 
 - **模块化分解**：大任务拆成 L1 模块 + L2 小任务，每个小任务带产出物、可验证的完成标准、依赖标注
 - **五路检索**：本地索引（秒回）+ GitHub 仓库雷达（按星扫库）+ 四个技能目录（2 个社区 awesome + anthropics/skills 与 claude-plugins-official 两个官方仓库）+ **市场路（`market_search.py`：三源并联 SkillHub / skills.sh / ClawHub + 分类浏览 + 热门榜 + 技能详情与读原文，即 find-skills 除安装外的全部能力，只查不装）** + SkillsMP MCP（接入即用，覆盖面最广）
+- **三层自动扩词（v2.7.0）**：静态术语表 → **整句机翻**（MyMemory，免 key）→ **伪相关反馈 PRF**（从首轮结果标题里挖「库存自己用的说法」）。级联触发：首轮召回不足才追加第二轮，并发执行不叠加延迟。解决的是「静态术语表永远有表外的词」——实测「投资准入负面清单」「多语言翻译」原本扩出**空集**、强命中 0，现在能自己译出 `Negative list for investment access` / `Multilingual Translate` 并召回对应技能
+- **扩词但不污染排序**：译文里只有 ≥6 字母的实词才进 tokens 打分，短词/泛词（`GENERIC_EN`）/PRF 词一律只扩召回（实测 `access`/`list` 进 tokens 会把「全球文献知识库」顶成强命中）；PRF 必须「有种子才扩散」且词须出现在 ≥2 条结果的 name/slug 里（描述可套模板，标题不会）
 - **市场路修掉 find-skills 的四个坑**：SkillHub 的 `score` 实测区分度失效（全在 0.04~0.10）→ 改按关键词重叠重排；高下载无关技能霸榜 → 零重叠的降级到「仅语义候选」不进主卡；不知本地装没装 → 已装同名单独标出并指向 `check_updates.py`；文档过时（分类实际 13 个非 7 个、键名不同、`npx` 命令本机 SIGTERM）→ 一律直连 REST 端点
 - **`--detail` 把「猜名字」变成「读原文」**：SkillHub 详情给摘要、发布方认证、是否需 API key、下载/星标、**第三方安全报告**（keen/sanbu 的 benign 判定）；ClawHub 给 `moderation.verdict`；skills.sh 无描述但能经 GitHub 定位 `<skill>/SKILL.md` 取正文
 - **分源分区而非混排**：只有 skills.sh 真不返回描述，关键词重叠只能命中 name；混排会把它的源内排序误判成噪音沉底——那正是「find-skills 找得到、LJC 找不到」的东西。故有描述的源（SkillHub / ClawHub）走强/弱命中分桶，skills.sh 单列「外部源」区
@@ -140,7 +143,7 @@ python3 scripts/find.py semantic
 | GitHub 仓库雷达       | `github_search.py`           | 搜索 API 按星排序；未认证 10 次/分                             |
 | GitHub 技能目录       | `github_search.py --catalog` | 2 个社区 awesome + 2 个官方仓库（树形抓取）；7 天缓存，`--refresh` 强刷 |
 | SkillsMP（MCP 连接器） | 客户端的 SkillsMP MCP 工具         | 百万级 SKILL.md 聚合市场，覆盖面最广；接入了就用，没接入说清                |
-| 市场路（三源 + 附加端点）    | `market_search.py`           | 内联 find-skills 的**全部检索源与附加端点**：SkillHub（有描述）+ ClawHub（有描述）+ skills.sh（无描述）；`--categories/--category/--hot/--detail`；只查不装；`--source` 可限定 |
+| 市场路（三源 + 附加端点）    | `market_search.py`           | 内联 find-skills 的**全部检索源与附加端点**：SkillHub（有描述）+ ClawHub（有描述）+ skills.sh（无描述）；**三层自动扩词**（表 → 机翻 → PRF），术语表外的词自己会想到；`--categories/--category/--hot/--detail`；只查不装；`--source` 可限定 |
 
 通道之间不短路：本地秒回但只覆盖已装；GitHub 覆盖开源公开；SkillsMP 面最广但质量参差；市场路三源覆盖广，但 SkillHub 的分数不可信（靠重叠重排兜住），skills.sh 不返回描述（靠 `--detail` 读原文）。至少覆盖「本地 + GitHub + 其一市场」再下结论。
 
@@ -266,10 +269,10 @@ lumin-job-criterion/
 ├── scripts/
 │   ├── find.py              本地索引：build / query / suggest / list
 │   ├── github_search.py     GitHub 通道：repo 雷达 + catalog 四目录
-│   ├── market_search.py     市场路：三源并联 + 分类/热门/详情（只查不装）
+│   ├── market_search.py     市场路：三源并联 + 三层自动扩词 + 分类/热门/详情（只查不装）
 │   ├── security_check.py    安全门：BLOCK / WARN / PASS
 │   └── ljc_terms.example.json  用户级术语扩展示例
-├── tests/test_ljc.py        128 项零网络测试
+├── tests/test_ljc.py        137 项零网络测试
 ├── docs/coverage-example.svg   覆盖图输出示例
 └── index.json / .cache/     运行时产物（git 忽略）
 

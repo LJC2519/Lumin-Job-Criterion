@@ -1297,5 +1297,86 @@ class TestMarketBreadth(unittest.TestCase):
         self.assertEqual(p(""), ("skillhub", ""))
 
 
+class TestAutoExpand(unittest.TestCase):
+    """三层自动扩展（表 → 翻译 → 库存反馈）。
+
+    动机：静态术语表永远有表外的词。2026-10-29 实测「投资准入负面清单」「多语言翻译」
+    扩出空集，强命中直接塌成 0。要在脚本层自己产词，且不能把噪音带进排序。
+    """
+
+    def test_has_cn(self):
+        self.assertTrue(market_search.has_cn("法条检索"))
+        self.assertTrue(market_search.has_cn("OCR 扫描件"))
+        self.assertFalse(market_search.has_cn("speech to text"))
+
+    def test_en_words_drops_stopwords_and_short(self):
+        toks = market_search.en_words("the skill of a tool for ocr and extract")
+        self.assertNotIn("the", toks)      # 停用词
+        self.assertNotIn("skill", toks)    # 元词
+        self.assertNotIn("ocr", toks)      # 3 字母，默认 min_len=4
+        self.assertIn("extract", toks)
+
+    def test_en_words_keeps_short_when_asked(self):
+        """检索词袋要留住 ocr/asr/pdf 这类缩写，否则召回不到标题就叫 ocr 的技能。"""
+        self.assertIn("ocr", market_search.en_words("OCR Scan", min_len=3))
+
+    def test_feedback_requires_title_seed(self):
+        """PRF 必须「有种子才扩散」：只在描述里出现、标题里没有的词不得入选。
+
+        实测教训：「投资准入负面清单」首轮混进 WPS Office，PRF 学出
+        generator/office/suite，再检索把整批 Office 技能拉回来（query drift）。
+        """
+        items = [
+            {"name": "alpha", "slug": "alpha", "desc": "toolkit generator suite office"},
+            {"name": "beta", "slug": "beta", "desc": "toolkit generator suite office"},
+        ]
+        # equipment 在描述里出现 2 次，但标题里从未出现 → 应被过滤
+        items[0]["desc"] += " equipment"
+        items[1]["desc"] += " equipment"
+        got = market_search.expand_by_feedback(items, set(), top_n=10, min_df=2, cap=6)
+        self.assertEqual(got, [])
+
+    def test_feedback_takes_title_topic(self):
+        items = [
+            {"name": "mineru ocr", "slug": "mineru-ocr", "desc": "extract tables from pdf"},
+            {"name": "pdf ocr", "slug": "pdf-ocr", "desc": "extract text tables"},
+            {"name": "noise", "slug": "noise", "desc": "unrelated thing"},
+        ]
+        got = market_search.expand_by_feedback(items, set(), top_n=10, min_df=2, cap=6)
+        self.assertIn("ocr", got)          # 两条标题都有
+        self.assertNotIn("extract", got)   # 只在描述里，标题没有
+
+    def test_feedback_excludes_known_tokens(self):
+        items = [
+            {"name": "pdf ocr", "slug": "pdf-ocr", "desc": "x"},
+            {"name": "pdf ocr", "slug": "pdf-ocr2", "desc": "x"},
+        ]
+        got = market_search.expand_by_feedback(items, {"pdf", "ocr"}, top_n=10, min_df=2)
+        self.assertNotIn("pdf", got)
+        self.assertNotIn("ocr", got)
+
+    def test_rescue_needed_threshold(self):
+        """前 5 名里重叠≥2 的不足 3 个才补救。校准自实测：
+        法条检索 5/5 不必补救，OCR 扫描件 0/5 必须补救。"""
+        good = [{"_ov": 3}] * 4 + [{"_ov": 1}]
+        bad = [{"_ov": 0}] * 5
+        self.assertFalse(market_search.rescue_needed(good))
+        self.assertTrue(market_search.rescue_needed(bad))
+        self.assertFalse(market_search.rescue_needed([{"_ov": 2}] * 3))
+
+    def test_translate_skips_pure_english(self):
+        """英文查询不调翻译接口，省免费额度也省 1.5s 延迟。"""
+        words, text, status = market_search.expand_by_translate("speech to text")
+        self.assertEqual(words, [])
+        self.assertEqual(text, "")
+        self.assertIn("skip", status)
+
+    def test_generic_words_never_score(self):
+        """泛词可扩召回但不能进打分——实测 access/list 进 tokens 后，
+        「投资准入负面清单」把「全球文献知识库」「去AI味降重」顶成了强命中。"""
+        for w in ("access", "list", "data", "text", "document"):
+            self.assertIn(w, market_search.GENERIC_EN)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

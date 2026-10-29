@@ -28,10 +28,21 @@
   4. 文档过时：分类实际 13 个（文档写 7 个）、分类键名也不同（dev-programming ≠ developer-tools）；
      Step2b 的 npx 命令在本机 SIGTERM，故直连 REST 端点
 
+三层自动扩展（v2.7.0）—— 目的是「脚本自己想到术语表外的词」，像 find-skills 那样：
+  1 表    expand_terms()      静态中英术语表，0 网络成本，准但不全
+  2 译    expand_by_translate 整句机翻（MyMemory，免 key）。这是解决「表外词」的根本：
+          实测「投资准入负面清单」「多语言翻译」在术语表里扩出空集，强命中直接塌成 0
+  3 反馈  expand_by_feedback  伪相关反馈 PRF：从首轮结果的 name/slug 里挖「库存自己用的说法」
+  级联策略：首轮跑「表」，并发拿翻译；只有前 5 名里重叠≥2 的不足 3 个时才追加第二轮，
+  常见查询不为冷门场景付延迟代价。三层的词都会并入 tokens 参与重叠打分
+  （只有搜、不参与打分的话，外部源永远零重叠，又被安装量霸榜项顶到前面）。
+
 纪律不变：**只查不装**。本脚本不发安装请求、不写 skills 目录，只给命令。
 
 用法：
-  python3 scripts/market_search.py "OCR 扫描件表格提取"          # 默认三源并联
+  python3 scripts/market_search.py "OCR 扫描件表格提取"          # 默认三源 + 自动三层扩展
+  python3 scripts/market_search.py "法条" --no-expand            # 只打原句，不扩词（排错用）
+  python3 scripts/market_search.py "法条" --expand 4             # 每层最多 4 个词；0 = 关闭
   python3 scripts/market_search.py "ocr" --source skills.sh      # 只查一个源
   python3 scripts/market_search.py "法条" --source all --top 6
   python3 scripts/market_search.py --categories                  # 列全部分类
@@ -208,15 +219,23 @@ def parse_clawhub(payload):
     return out
 
 
+# 每源单次请求超时（秒）。实测 2026-10-29：SkillHub ~0.5s、skills.sh ~1.0s，
+# ClawHub 2.5~6.8s 且对中文查询常返 0 条 —— 它是唯一延迟瓶颈，单独收紧到 5s。
+# 超时即降级为该源无结果，其余源照常（三源本就并联、互不依赖）。
+SRC_TIMEOUT = {"skillhub": 10, "skills.sh": 10, "clawhub": 4}
+
+
 def fetch_skillhub(query, limit):
     url = f"https://lightmake.site/api/v1/search?q={urllib.parse.quote(query)}&limit={limit}"
-    payload, err = _get_json(url)
-    return ([], err) if err else (parse_skillhub(payload), None)
+    payload, err = _get_json(url, timeout=SRC_TIMEOUT["skillhub"])
+    if err:
+        return [], err
+    return parse_skillhub(payload)[:limit], None
 
 
 def fetch_skillsh(query, limit):
     url = f"https://skills.sh/api/search?q={urllib.parse.quote(query)}"
-    payload, err = _get_json(url)
+    payload, err = _get_json(url, timeout=SRC_TIMEOUT["skills.sh"])
     if err:
         return [], err
     return parse_skillsh(payload)[:limit], None
@@ -224,9 +243,9 @@ def fetch_skillsh(query, limit):
 
 def fetch_clawhub(query, limit):
     url = f"https://clawhub.com/api/v1/search?q={urllib.parse.quote(query)}&limit={limit}"
-    payload, err = _get_json(url)
+    payload, err = _get_json(url, timeout=SRC_TIMEOUT["clawhub"])
     if err:
-        return [], err
+        return [], f"{err}（该源超时降级，结果不含 ClawHub）"
     return parse_clawhub(payload)[:limit], None
 
 
@@ -443,12 +462,144 @@ def query_tokens(query):
 
 
 def expand_terms(query):
-    """复用 find.py 的中→英术语扩展，失败则退化为空。"""
+    """第 1 层扩展：复用 find.py 的中→英术语表，失败则退化为空。"""
     try:
         import find  # noqa: WPS433
         return [t for t in find.expand_query(query) if t and t.lower() != query.lower()]
     except Exception:
         return []
+
+
+# ---------------------------------------------------------------- 自动扩展
+# 问题：静态术语表永远有表外的词。2026-10-29 实测——「投资准入负面清单」与
+# 「多语言翻译」扩出空集，导致这两类查询的强命中直接塌成 0。find-skills 靠
+# 模型当场想英文词，不受表限制；要追平，脚本必须在运行时自己产词。
+# 故扩成三层，逐层兜底：
+#   1 表    —— 静态术语表，0 成本，准但不全
+#   2 译    —— 机器翻译整句，解决「表外词」这一根本问题
+#   3 反馈  —— 伪相关反馈（PRF）：从首轮结果的描述里挖出「库存自己用的说法」
+# 三层的词全部并入 tokens 参与重叠打分（只搜不算 = 外部源零重叠被安装量霸榜）。
+
+EN_STOP = set("""
+a an the of for and or to in on with by from is are was were as at into that this it its
+be been being do does did has have had will would can could should may might must not no
+all any each some such than then there their our your you we they he she who whom what how
+why via per vs etc also more most less new make made get got set see look like just only
+very much many few own same other another both either neither
+skill skills tool tools plugin plugins agent agents use used using usage support supports
+supporting based enable enabled allow allows help helps provide provides including include
+includes file files folder project projects data text content work works working way ways
+""".split())
+
+
+def has_cn(text):
+    return bool(re.search(r"[\u4e00-\u9fff]", text or ""))
+
+
+# 泛词：可以扩召回，但不能进重叠打分。它们在任何描述里都出现，
+# 进了 tokens 就会把完全无关的高下载技能顶成「强命中」。
+GENERIC_EN = set("""
+access list lists data file files text content document documents page pages
+system systems service services tool tools skill skills platform feature features
+function functions option options value values item items result results
+""".split())
+
+
+def en_words(text, min_len=4):
+    """抽英文词：小写、去停用词、去短词。
+
+    min_len=4 是刻意的：overlap() 用子串匹配，3 字母词（pdf/doc/api）误命中太狠，
+    会把无关技能顶上来。宁可少扩几个词，也不能把主卡搅浑。
+    """
+    out = set()
+    for w in re.findall(r"[a-zA-Z][a-zA-Z0-9+#]{2,}", text or ""):
+        w = w.lower()
+        if len(w) >= min_len and w not in EN_STOP:
+            out.add(w)
+    return out
+
+
+def expand_by_translate(query, refresh=False):
+    """第 2 层：整句机翻中→英（MyMemory，免 key、免额度申请）。
+
+    实测（2026-10-29，本机网络）：
+      google-gtx 超时 / libretranslate SSL 握手超时 / bing-edge 502 —— 均不可用
+      mymemory 200，1.3~2.2s，「投资准入负面清单 → Negative list for investment
+      access」「语音转文字 → Speech To Text」，8 条测试全对
+    译文缓存 30 天：术语稳定，且能省匿名免费额度。
+    返回 (词列表, 整句译文, 状态串)。任何失败都只降级、不抛错。
+    """
+    if not has_cn(query):
+        return [], "", "skip（查询无中文，无需翻译）"
+
+    def go():
+        url = ("https://api.mymemory.translated.net/get?q=%s&langpair=zh-CN|en"
+               % urllib.parse.quote(query))
+        payload, err = _get_json(url, timeout=8)
+        if err:
+            return None, err
+        if not isinstance(payload, dict):
+            return None, "返回非 JSON"
+        if payload.get("quotaFinished"):
+            return None, "免费额度用尽"
+        text = ((payload.get("responseData") or {}).get("translatedText") or "").strip()
+        if not text or "MYMEMORY WARNING" in text.upper():
+            return None, "译文为空或限流提示"
+        return {"text": text}, None
+
+    payload, err, _ = _meta_cached("tr|" + query, refresh, go, ttl=30 * 86400)
+    if err or not payload:
+        return [], "", f"不可用（{err}）"
+    text = payload["text"]
+    # min_len=3：检索词袋必须留住 ocr/pdf/asr 这类核心缩写。
+    # 打分侧另有 ≥6 与 GENERIC_EN 两道闸，不会因为这里放宽而污染排序。
+    return sorted(en_words(text, min_len=3)), text, "ok"
+
+
+def expand_by_feedback(items, tokens, top_n=20, min_df=2, cap=6):
+    """第 3 层：伪相关反馈 PRF —— 从首轮结果里挖「库存自己用的说法」。
+
+    这层不依赖任何外部服务，而且比翻译更贴近库存：翻译给的是「正确的英文」，
+    PRF 给的是「这批技能实际写的英文」，后者才可能命中标题。
+
+    三个过滤（都是 2026-10-29 实测撞出来的）：
+      1 df 侧 min_len=4 —— 3 字母以下的杂音太多；但 ocr/asr/pdf 这类缩写必须
+        靠标题信号救回来（见第 3 条），它们是核心技术词，砍掉就白扩了
+      2 df ≤ top_n*0.45 —— 出现太多次的是套话（"when to use this skill"），没有区分度
+      3 **必须在 ≥2 条结果的 name/slug 里出现过** —— 最狠也最有效的一条：
+        描述可以套模板，标题不会。模板词（find/when/token）永远不会出现在标题里，
+        而 ocr/asr 会。所以这里放行 min_len=3。
+    """
+    df, in_title = {}, {}
+    for it in items[:top_n]:
+        blob = " ".join([it.get("name") or "", it.get("desc") or "",
+                         it.get("desc_en") or "", it.get("slug") or ""])
+        for w in en_words(blob, min_len=4):
+            df[w] = df.get(w, 0) + 1
+        for w in en_words(f"{it.get('name') or ''} {it.get('slug') or ''}", min_len=3):
+            in_title[w] = in_title.get(w, 0) + 1
+    known = {t.lower() for t in tokens}
+    ceil = max(min_df, int(top_n * 0.45))
+    cand = {w: c for w, c in df.items()
+            if min_df <= c <= ceil and w not in known and in_title.get(w, 0) >= 2}
+    # 3 字母缩写（ocr / asr / pdf）过不了 df 的 min_len=4，但它们同时出现在多条
+    # 标题里就是最强的主题信号 —— 直接补进候选，否则「OCR 扫描件表格提取」这类
+    # 查询永远学不到 ocr 这个词（实测：词袋里丢了 ocr，召回全是 syncfusion 之类）。
+    for w, c in in_title.items():
+        if c >= 2 and w not in known and w not in cand:
+            cand[w] = c
+    ordered = sorted(cand.items(), key=lambda x: (-x[1], x[0]))
+    return [w for w, _ in ordered[:cap]]
+
+
+def rescue_needed(pool, min_good=3):
+    """前 5 名里有几个真相关（重叠≥2）？不足 min_good 就该补救。
+
+    实测校准：法条检索 5/5、ppt 演示文稿 4/5 → 不必补救；
+    OCR 扫描件表格提取 0/5、投资准入负面清单 0/5 → 必须补救。
+    """
+    head = pool[:5]
+    return sum(1 for i in head if i.get("_ov", 0) >= 2) < min_good
 
 
 def overlap(item, tokens):
@@ -589,23 +740,51 @@ def fmt_row(i, it, tag=""):
     return "\n".join(lines)
 
 
-def run(query, top=8, expand=0, refresh=False, as_json=False, sources=SOURCES):
-    extra = []
-    if expand:
-        extra = [t for t in expand_terms(query) if re.search(r"[a-zA-Z]", t)][:expand]
-    # 扩展词必须同时进 tokens——只拿去搜索、不拿去打分的话，中文查询在
-    # 无描述的外部源里永远零重叠，又会被安装量霸榜项顶到前面（实测「法条」→ 52 万安装的无关项）。
-    tokens = query_tokens(query) | {t.lower() for t in extra}
-    queries = [query]
+def run(query, top=8, expand=None, refresh=False, as_json=False, sources=SOURCES):
+    """expand=None → 自动三层扩展；expand=0 → 关闭；expand=N → 每层最多 N 个词。
 
+    扩展词必须同时进 tokens——只拿去搜索、不拿去打分的话，中文查询在无描述的
+    外部源里永远零重叠，又会被安装量霸榜项顶到前面（实测「法条」→ 52 万安装的无关项）。
+    """
+    cap = 8 if expand is None else max(0, expand)
+    auto = cap > 0
+    tokens = query_tokens(query)
     pool, errs, cached = [], [], False
-    for q in queries + extra:
-        items, e, c = search_all(q, sources=sources, limit=20, refresh=refresh)
-        cached = cached or c
-        errs += e
+    layers = {"table": [], "translate": [], "feedback": []}
+    tr_text, tr_words, tr_stat = "", [], ("off" if not auto else "未发起")
+    rescued = False
+
+    def absorb(items, via):
         for it in items:
-            it["_via"] = q
+            it["_via"] = via
             pool.append(it)
+
+    # 第 1 层：静态术语表（纯本地，0 网络成本）
+    if auto:
+        layers["table"] = [t for t in expand_terms(query) if re.search(r"[a-zA-Z]", t)][:cap]
+    tokens |= {w.lower() for w in layers["table"]}
+    table_bag = " ".join(layers["table"])
+
+    # ── 首轮三路并发：原句检索 / 表词袋检索 / 整句翻译。翻译与检索互不依赖，
+    #    串行会把每次查询的延迟凭空拉长 1.5s。
+    with ThreadPoolExecutor(max_workers=3) as ex:
+        jobs = {"main": ex.submit(search_all, query, sources, 20, refresh)}
+        if table_bag:
+            # 词袋只打英文池（skills.sh / ClawHub）：中文原句在 SkillHub 的语义检索
+            # 本来就比一串拼起来的英文词准，重复打一次既慢又拉低质量。
+            bag_src = tuple(s for s in sources if s != "skillhub") or sources
+            jobs["bag"] = ex.submit(search_all, table_bag, bag_src, 20, refresh)
+        if auto:
+            jobs["tr"] = ex.submit(expand_by_translate, query, refresh)
+        for name, fut in jobs.items():
+            res = fut.result()
+            if name == "tr":
+                tr_words, tr_text, tr_stat = res
+                continue
+            items, e, cached_any = res
+            cached = cached or cached_any
+            errs += e
+            absorb(items, query if name == "main" else table_bag)
 
     if errs and not pool:
         msg = "；".join(errs)
@@ -616,8 +795,42 @@ def run(query, top=8, expand=0, refresh=False, as_json=False, sources=SOURCES):
             print("  备援：curl 手打 SkillHub，或加载官方 find-skills。")
         return 1
 
-    pool = dedupe(pool)
-    pool = rerank(pool, tokens)
+    pool = rerank(dedupe(pool), tokens)
+
+    # ── 第二轮（按需补救）：首轮前 5 名里真相关不足 3 个，说明术语表没覆盖住，
+    #    用「整句译文 + 译文词 + PRF 词」再打一轮。库存够用时不多花一分钱。
+    if auto and rescue_needed(pool):
+        layers["translate"] = [w for w in tr_words if w not in {t.lower() for t in tokens}][:cap]
+        # PRF 必须「有种子才扩散」：首轮全是噪音时，从噪音里学词只会更偏
+        # （实测「投资准入负面清单」首轮混进 WPS Office，PRF 学出 generator/office/suite，
+        #   再检索就把整批 Office 技能拉回来 —— 经典 query drift）。
+        seeds = [i for i in pool if i.get("_ov", 0) >= 2]
+        layers["feedback"] = (expand_by_feedback(seeds, tokens, top_n=10, min_df=2, cap=cap)
+                              if len(seeds) >= 2 else [])
+        # 只有译文里的「长实词」参与打分；短词与 PRF 词一律只扩召回、不打分。
+        # 实测教训：「投资准入负面清单」译出 access/list/investment/negative，其中
+        # access 与 list 太泛，进了 tokens 就把「全球文献知识库」「去AI味降重」顶成强命中。
+        tokens |= {w.lower() for w in layers["translate"]
+                   if len(w) >= 6 and w.lower() not in GENERIC_EN}
+        # 原句里的英文词（ocr / asr / pdf 这类缩写）必须留在词袋里。译文会把
+        # 「OCR 扫描件表格提取」翻成 "OCR Scan Form Extraction"，但下游抽词若只剩
+        # form/scan，打 skills.sh 就召回不到标题里直接写 ocr 的那批技能。
+        orig_en = [w.lower() for w in re.findall(r"[a-zA-Z][a-zA-Z0-9+#]{1,}", query)]
+        bag2 = " ".join(dict.fromkeys(
+            orig_en + layers["translate"] + layers["feedback"]))[:400]
+        round2 = [q for q in (tr_text, bag2) if q]
+        if round2:
+            # 并发：两轮串行会把单次查询拖到 17s（实测），并发的上限只取决于最慢那个源。
+            with ThreadPoolExecutor(max_workers=len(round2)) as ex:
+                jobs2 = [(q, ex.submit(search_all, q, sources, 20, refresh)) for q in round2]
+                for q, fut in jobs2:
+                    items, e, c = fut.result()
+                    cached = cached or c
+                    errs += e
+                    absorb(items, q)
+            pool = rerank(dedupe(pool), tokens)
+            rescued = True
+
     inst = installed_names()
     have, hit, sem = split_buckets(pool, inst, only_src=DESC_SOURCES)
     hit_strong = [i for i in hit if i["_ov"] >= 2]
@@ -626,8 +839,11 @@ def run(query, top=8, expand=0, refresh=False, as_json=False, sources=SOURCES):
 
     if as_json:
         print(json.dumps({
-            "ok": True, "query": query, "expanded": extra, "sources": list(sources),
-            "cached": cached, "errors": errs,
+            "ok": True, "query": query, "sources": list(sources),
+            "cached": cached, "errors": errs, "rescued": rescued,
+            "expanded": {"table": layers["table"], "translate": layers["translate"],
+                         "feedback": layers["feedback"], "translate_sentence": tr_text,
+                         "translate_status": tr_stat},
             "counts": {"installed": len(have), "keyword_strong": len(hit_strong),
                        "keyword_weak": len(hit_weak), "external": len(ext),
                        "semantic": len(sem)},
@@ -637,8 +853,20 @@ def run(query, top=8, expand=0, refresh=False, as_json=False, sources=SOURCES):
         return 0
 
     print(f"LJC · 市场路 · 查询「{query}」")
-    if extra:
-        print(" 术语扩展：" + ", ".join(extra))
+    if auto:
+        parts = []
+        if layers["table"]:
+            parts.append("表{" + ", ".join(layers["table"][:6]) + "}")
+        if layers["translate"]:
+            parts.append("译{" + ", ".join(layers["translate"][:6]) + "}")
+        if layers["feedback"]:
+            parts.append("库存反馈{" + ", ".join(layers["feedback"][:6]) + "}")
+        print(" 自动扩展：" + ("  ".join(parts) if parts else "无（术语表与翻译均未产出词，按原句检索）"))
+        if tr_text:
+            tail = "　※ 首轮召回不足，已用它追加检索" if rescued else "　（首轮召回够用，未追加）"
+            print(f"   ↳ 整句译文「{tr_text}」{tail}")
+        if tr_stat not in ("ok", "off", "skip（查询无中文，无需翻译）"):
+            print(f"   ↳ 翻译层：{tr_stat}（已降级，不影响检索）")
     print(" 源：" + ", ".join(SRC_LABEL[s] for s in sources)
           + " ｜ " + ("本地缓存（6h）" if cached and not refresh else "实时请求"))
     print(f" 去重后 {len(pool)} 个 · 已装 {len(have)} / 强命中 {len(hit_strong)}"
@@ -920,6 +1148,17 @@ def check():
         print("  ✓ GitHub API：可达（raw.githubusercontent 本机被 SSL 阻断，故走 contents API）")
         ok += 1
 
+    print(" 〔自动扩展〕")
+    payload, err = _get_json(
+        "https://api.mymemory.translated.net/get?q=%E6%B3%95%E6%9D%A1&langpair=zh-CN|en", timeout=8)
+    if err:
+        print(f"  ✗ 翻译层（MyMemory）：{err} —— 第 2 层扩词不可用，"
+              f"仅剩术语表与 PRF，表外词会漏")
+    else:
+        txt = ((payload or {}).get("responseData") or {}).get("translatedText") or ""
+        print(f"  ✓ 翻译层：可达（法条 → {txt}）")
+        ok += 1
+
     print(f" 缓存：{CACHE_DIR}（TTL {CACHE_TTL // 3600}h）")
     if ok == 0:
         print("  → 全不可用：改用本地索引 + GitHub 两路，缺口如实写。")
@@ -991,8 +1230,15 @@ def main():
         return cmd_detail(det, as_json=as_json, refresh=refresh)
 
     # ---- 检索 ----
+    no_expand = "--no-expand" in argv
+    argv = [a for a in argv if a != "--no-expand"]
     expand_raw, src_raw, top_raw = take("--expand"), take("--source"), take("--top")
-    expand = as_int(expand_raw, 2)
+    if no_expand:
+        expand = 0
+    elif expand_raw is None:
+        expand = None          # 默认自动三层（表 → 翻译 → 库存反馈）
+    else:
+        expand = as_int(expand_raw, 8)   # 显式给定：每层最多 N 个词，0 = 关闭
     top = as_int(top_raw, 8)
     sources = SOURCES
     if src_raw:
