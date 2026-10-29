@@ -350,16 +350,33 @@ def detail_skillhub(slug, refresh=False):
     return _meta_cached(f"detail|skillhub|{slug}", refresh, go)
 
 
-def detail_clawhub(slug, refresh=False):
-    """GET /api/v1/skills/<slug> —— 同名多发布方时 API 返 409，需带 owner（owner/slug）。"""
+def detail_clawhub(spec, refresh=False):
+    """GET /api/v1/skills/<slug>[?owner=<handle>]
+
+    实测三件事（2026-10-29）：
+      ① 裸 slug 同名多条时返回 **409 AMBIGUOUS_SKILL_SLUG**（例：weather 有多个发布方）
+      ② 指定 owner 的正确写法是**查询参数** `?owner=steipete`；
+         `/skills/<owner>/<slug>` 与 `/skills/<owner>%2F<slug>` 都是 404
+      ③ 不歧义时裸 slug 直接 200
+    """
+    owner, bare = "", spec
+    if "/" in spec:
+        owner, _, bare = spec.rpartition("/")
+
     def go():
-        payload, err = _get_json(f"https://clawhub.com/api/v1/skills/{urllib.parse.quote(slug)}")
+        url = f"https://clawhub.com/api/v1/skills/{urllib.parse.quote(bare)}"
+        if owner:
+            url += "?" + urllib.parse.urlencode({"owner": owner})
+        payload, err = _get_json(url)
         if err:
+            if "409" in err and not owner:
+                return None, (f"slug「{bare}」有多个发布方，须写明 owner：\n"
+                              f"    --detail clawhub:<owner>/{bare}")
             return None, err
         if not isinstance(payload, dict) or not payload.get("skill"):
-            return None, f"无该技能（slug={slug}）；同名多条时请写 owner/slug"
+            return None, f"无该技能（{spec}）"
         return payload, None
-    return _meta_cached(f"detail|clawhub|{slug}", refresh, go)
+    return _meta_cached(f"detail|clawhub|{spec}", refresh, go)
 
 
 def _gh_tree(repo, branch="main", refresh=False):
